@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "ultrasonic.h"
 
 /* USER CODE END Includes */
 
@@ -85,6 +86,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   /* USER CODE BEGIN 2 */
+  /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
+  Ultrasonic_Init();
+  /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
+   *   us_ok_mask の bit i = 1 ならセンサ i が応答あり（0x0F なら4個とも正常）。
+   *   us_check は 0:全部正常 / -1:応答なしのセンサあり。
+   *   結果はデバッガの Variables / Live Expressions で確認する。 */
+  uint8_t us_ok_mask = 0U;
+  int us_check = Ultrasonic_CheckConnection(&us_ok_mask);
+  (void)us_check;   /* 未使用警告を消す */
 
   /* USER CODE END 2 */
 
@@ -141,6 +151,13 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+/* EXTI（外部ピン割り込み）が起きるたびに HAL から呼ばれる関数。
+ * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。
+ * エンコーダ1（PC8/PC9）の処理を足すときは、ここで GPIO_Pin を見て振り分ける。 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  Ultrasonic_EXTI_Callback(GPIO_Pin);
+}
 
 /* USER CODE END 4 */
 
