@@ -38,6 +38,8 @@
 #include "ultrasonic.h"
 #include "main.h"
 
+extern TIM_HandleTypeDef htim5;   /* main.c で CubeMX が生成 */
+
 #define US_SOUND_MM_PER_US   0.343f   /* 音速 [mm/us] */
 #define US_TRIG_PULSE_US     10U      /* Trig パルスの幅 [us]（HC-SR04 の仕様） */
 #define US_CHECK_WAIT_MS     60U      /* 接続確認で Echo を待つ時間 [ms] */
@@ -73,22 +75,15 @@ static volatile uint8_t  s_rise_valid;              /* Echo の立ち上がり�
 static volatile uint32_t s_rise_us[US_SENSOR_NUM];  /* Echo が立ち上がった時刻（TIM5 の値） */
 
 /**
-  * @brief  TIM5 を「1us ごとに +1 するストップウォッチ」として動かし始める。
+  * @brief  TIM5（1us ごとに +1 するストップウォッチ）のカウントを開始する。
   *         main() の最初に1回だけ呼ぶ。
+  *         分周（84MHz -> 1MHz）と上限（32bit 最大）は CubeMX が MX_TIM5_Init で
+  *         設定済み（Prescaler=83, Period=4294967295）なので、ここでは開始するだけ。
+  *         クロック設定を変えたときは、Prescaler も合わせて変えること。
   */
 void Ultrasonic_Init(void)
 {
-  uint32_t tim_clk = HAL_RCC_GetPCLK1Freq();
-  /* APB1 が分周されているとき、タイマには 2倍のクロックが入る（STM32 の決まり） */
-  if ((RCC->CFGR & RCC_CFGR_PPRE1) != RCC_CFGR_PPRE1_DIV1) {
-    tim_clk *= 2U;
-  }
-  __HAL_RCC_TIM5_CLK_ENABLE();                 /* TIM5 にクロックを供給 */
-  TIM5->CR1  = 0U;                             /* いったん停止 */
-  TIM5->PSC  = (tim_clk / 1000000U) - 1U;      /* 分周: タイマクロックを 1MHz(=1us)にする */
-  TIM5->ARR  = 0xFFFFFFFFU;                    /* 32bit いっぱいまで数える（約71分で一周） */
-  TIM5->EGR  = TIM_EGR_UG;                     /* 設定を反映させる */
-  TIM5->CR1 |= TIM_CR1_CEN;                    /* カウント開始 */
+  HAL_TIM_Base_Start(&htim5);
 }
 
 /**
