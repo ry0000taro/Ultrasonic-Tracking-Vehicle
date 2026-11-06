@@ -106,6 +106,15 @@ int main(void)
   MX_TIM5_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
+  for (int i = 0; i < 3; i++) {
+    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);   /* ON  */
+    HAL_Delay(500);
+    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET); /* OFF */
+    HAL_Delay(500);
+  }
+  /* TEMP-BUZZER-TEST ここまで */
+
   /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
   Ultrasonic_Init();
   /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
