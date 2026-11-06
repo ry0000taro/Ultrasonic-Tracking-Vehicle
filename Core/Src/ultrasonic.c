@@ -87,35 +87,33 @@ void Ultrasonic_Init(void)
 }
 
 /**
+  * @brief  mask で指定したセンサの Trig を、まとめて HIGH または LOW にする。
+  * @param  mask   bit i = 1 のセンサ i を操作する
+  * @param  state  GPIO_PIN_SET (HIGH) / GPIO_PIN_RESET (LOW)
+  */
+static void set_trig(uint8_t mask, GPIO_PinState state)
+{
+  for (int i = 0; i < US_SENSOR_NUM; i++) {
+    if (mask & (1U << i)) {
+      HAL_GPIO_WritePin(s_pin[i].trig_port, s_pin[i].trig_pin, state);
+    }
+  }
+}
+
+/**
   * @brief  mask で指定したセンサの Trig に、同時に 10us のパルスを出す。
   *         Echo は待たずに戻る（Echo は割り込みが測る）。
   * @param  mask  bit i = 1 のセンサ i を鳴らす
   */
 static void fire(uint8_t mask)
 {
-  uint32_t t0;
-  int i;
-
   s_waiting    |= mask;                  /* 「Echo 待ち」に登録 */
   s_rise_valid &= (uint8_t)~mask;        /* 前回の立ち上がり記録を捨てる */
 
-  /* Trig を HIGH に。BSRR は下位16bit に書くとそのピンが HIGH になるレジスタ */
-  for (i = 0; i < US_SENSOR_NUM; i++) {
-    if (mask & (1U << i)) {
-      s_pin[i].trig_port->BSRR = s_pin[i].trig_pin;
-    }
-  }
-
-  /* 10us 待つ。TIM5 が 1us ごとに増えるので、10 増えるまで待てばよい */
-  t0 = TIM5->CNT;
+  set_trig(mask, GPIO_PIN_SET);          /* Trig を HIGH に */
+  uint32_t t0 = TIM5->CNT;               /* 10us 待つ（TIM5 は 1us ごとに +1） */
   while ((TIM5->CNT - t0) < US_TRIG_PULSE_US) { }
-
-  /* Trig を LOW に。BSRR は上位16bit に書くとそのピンが LOW になる（16bit 左シフト） */
-  for (i = 0; i < US_SENSOR_NUM; i++) {
-    if (mask & (1U << i)) {
-      s_pin[i].trig_port->BSRR = (uint32_t)s_pin[i].trig_pin << 16U;
-    }
-  }
+  set_trig(mask, GPIO_PIN_RESET);        /* Trig を LOW に */
 }
 
 /**
