@@ -123,7 +123,6 @@ int main(void)
     printf("sensor%d: %s\r\n", i, (us_ok_mask & (1U << i)) ? "OK" : "NG (no response)");
   }
   printf("result=%d ok_mask=0x%02X\r\n", us_check, us_ok_mask);
-  printf("--- measuring (mm, '-' = no response) ---\r\n");
 
   /* USER CODE END 2 */
 
