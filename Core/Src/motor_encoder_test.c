@@ -50,6 +50,7 @@ static void MX_TIM1_Encoder_Init(void);
 static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
+static void Test_Buzzer(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -82,8 +83,9 @@ void MotorEncoderTest_Run(void)
                 case '5': Test_Motor1_Encoder1();   break;
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
+                case '8': Test_Buzzer();            break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 5, 6 or 7.");
+                    Serial_Println("[!] Invalid input. Enter 5, 6, 7 or 8.");
                     break;
             }
             Print_Menu();
@@ -131,6 +133,7 @@ static void Print_Menu(void)
     Serial_Println(" 5 : Motor1 + Encoder1 test");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
+    Serial_Println(" 8 : Buzzer test (PA0)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
 }
@@ -172,6 +175,40 @@ static void Test_Encoder_Monitor(void)
     }
 
     Serial_Println("\r\n[TEST 7] Done.");
+}
+
+/* ============================================================
+   Test 8: Buzzer test（PA0 = BUZZER）
+   PA0 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
+   注意: PA0 は TE-01 基板ではモータ2の IN1 なので、TE-01 では Motor2 につないだアームが動く。
+   ============================================================ */
+static void Test_Buzzer(void)
+{
+    Serial_Println("\r\n[TEST 8] Buzzer test (PA0)");
+    Serial_Println("NOTE: PA0 is Motor2 IN1 on the TE-01 board. Motor2 will move there.");
+    Serial_Println("Press Enter to start...");
+
+    char c = 0;
+    Serial_ReceiveChar(&c, HAL_MAX_DELAY);
+
+    /* 短く3回: 200ms ON / 200ms OFF */
+    Serial_Println("  Short beep x3");
+    for (int i = 0; i < 3; i++)
+    {
+        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+        HAL_Delay(200);
+        HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+        HAL_Delay(200);
+    }
+    HAL_Delay(500);
+
+    /* 長く1回: 1000ms ON */
+    Serial_Println("  Long beep x1");
+    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
+
+    Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
 }
 
 /* ============================================================
