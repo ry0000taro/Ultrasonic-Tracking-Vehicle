@@ -9,7 +9,7 @@
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
   *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PC9/PC8 (EXTI9/EXTI8 のソフト4逓倍)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1 のまま。実機の配線がここだった)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -39,17 +39,17 @@ static TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)。ここで初期化す�
 
 static char g_tx_buf[256];
 
-/* Encoder1 のソフトカウント（EXTI 割り込みで更新） */
-static volatile int32_t s_enc1_count = 0;
-static volatile uint8_t s_enc1_prev  = 0;
+static TIM_HandleTypeDef htim1;     /* Encoder1 (PA8/PA9)。ここで初期化する */
 
 /* ============================================================
    Function Prototypes
    ============================================================ */
 static void MotorEncoderTest_Init(void);
 static void MX_TIM13_14_PWM_Init(void);
+static void MX_TIM1_Encoder_Init(void);
 static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
+static void Test_Encoder_Monitor(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -81,8 +81,9 @@ void MotorEncoderTest_Run(void)
             {
                 case '5': Test_Motor1_Encoder1();   break;
                 case '6': Test_Motor2_Encoder2();   break;
+                case '7': Test_Encoder_Monitor();   break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 5 or 6.");
+                    Serial_Println("[!] Invalid input. Enter 5, 6 or 7.");
                     break;
             }
             Print_Menu();
@@ -94,17 +95,25 @@ static void MotorEncoderTest_Init(void)
 {
     MX_TIM13_14_PWM_Init();
 
+    /* Encoder2 (PB6/PB7): CubeMX 生成の MspInit は NOPULL なので、プルアップに再設定する */
+    GPIO_InitTypeDef enc2_gpio = {0};
+    enc2_gpio.Pin       = ENC2_B_Pin | ENC2_A_Pin;
+    enc2_gpio.Mode      = GPIO_MODE_AF_PP;
+    enc2_gpio.Pull      = GPIO_PULLUP;
+    enc2_gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
+    enc2_gpio.Alternate = GPIO_AF2_TIM4;
+    HAL_GPIO_Init(GPIOB, &enc2_gpio);
+
+    /* Encoder1: TIM1（PA8/PA9）。実機の配線に合わせてハードウェアエンコーダにした */
+    MX_TIM1_Encoder_Init();
+    HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+
     /* Encoder2: TIM4（CubeMX 生成）, Motor2: TIM3（CubeMX 生成） */
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);          /* Motor2 IN1 (PB4) */
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);          /* Motor2 IN2 (PB5) */
     HAL_TIM_PWM_Start(&htim13, TIM_CHANNEL_1);         /* Motor1 IN1 (PA6) */
     HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);         /* Motor1 IN2 (PA7) */
-
-    /* Encoder1 の現在の A/B 状態を初期値にする（A=PC9 を bit1, B=PC8 を bit0） */
-    s_enc1_prev = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
-                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
-    s_enc1_count = 0;
 
     Motor1_Set(0);
     Motor2_Set(0);
@@ -121,8 +130,48 @@ static void Print_Menu(void)
     Serial_Println("================================================");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
+    Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
+}
+
+/* ============================================================
+   Test 7: Encoder monitor（モータは回さない。手で軸を回して確認する）
+   ============================================================ */
+static void Test_Encoder_Monitor(void)
+{
+    Serial_Println("\r\n[TEST 7] Encoder monitor (motors OFF)");
+    Serial_Println("Rotate the shaft by hand. 'q' to stop, 'r' to reset counts.");
+
+    Motor1_Set(0);
+    Motor2_Set(0);
+    Encoder1_Reset();
+    Encoder2_Reset();
+
+    while (1)
+    {
+        char c = 0;
+        if (Serial_ReceiveChar(&c, 10))
+        {
+            if (c == 'q' || c == 'Q') break;
+            if (c == 'r' || c == 'R') { Encoder1_Reset(); Encoder2_Reset(); }
+        }
+
+        /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
+        snprintf(g_tx_buf, sizeof(g_tx_buf),
+                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 (long)Encoder1_Get(),
+                 (int)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8),
+                 (int)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9),
+                 (long)Encoder2_Get(),
+                 (int)HAL_GPIO_ReadPin(ENC2_A_GPIO_Port, ENC2_A_Pin),
+                 (int)HAL_GPIO_ReadPin(ENC2_B_GPIO_Port, ENC2_B_Pin));
+        Serial_Print(g_tx_buf);
+
+        HAL_Delay(50);
+    }
+
+    Serial_Println("\r\n[TEST 7] Done.");
 }
 
 /* ============================================================
@@ -141,6 +190,7 @@ static void Test_Motor1_Encoder1(void)
     Serial_ReceiveChar(&c, HAL_MAX_DELAY);
 
     Encoder1_Reset();
+    Encoder2_Reset();
 
     /* Ramp up: 0% -> ENCODER_TEST_DUTY% in steps of 5% */
     snprintf(g_tx_buf, sizeof(g_tx_buf), "  Ramp up: 0 -> %d%%\r\n", ENCODER_TEST_DUTY);
@@ -148,15 +198,20 @@ static void Test_Motor1_Encoder1(void)
     for (int d = 0; d <= ENCODER_TEST_DUTY; d += 5)
     {
         Motor1_Set((int16_t)d);
-        snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "  Motor1 duty = %2d%%\r\n", d);
-        Serial_Print(g_tx_buf);
-        HAL_Delay(300);
+        /* 加速中も 50ms ごとにエンコーダの値を表示する（300ms = 50ms x 6） */
+        for (int i = 0; i < 6; i++)
+        {
+            snprintf(g_tx_buf, sizeof(g_tx_buf),
+                     "\r  Motor1 duty = %2d%%   Encoder1 count = %7ld   Encoder2 count = %7ld   ",
+                     d, (long)Encoder1_Get(), (long)Encoder2_Get());
+            Serial_Print(g_tx_buf);
+            HAL_Delay(50);
+        }
     }
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Hold at %d%%%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  Hold at %d%%%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
     Serial_Print(g_tx_buf);
 
-    int32_t prev_count = 0;
+    int32_t prev_count = Encoder1_Get();
     int32_t count = 0;
 
     while (1)
@@ -170,9 +225,10 @@ static void Test_Motor1_Encoder1(void)
         int32_t delta = count - prev_count;
         prev_count = count;
 
+        /* Motor1 に付いているエンコーダがどちらか分からないため、Encoder2 も併記する */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Encoder1 count = %7ld  (delta/50ms = %+ld)   ",
-                 (long)count, (long)delta);
+                 "\r  Encoder1 count = %7ld  (delta/50ms = %+ld)   Encoder2 count = %7ld   ",
+                 (long)count, (long)delta, (long)Encoder2_Get());
         Serial_Print(g_tx_buf);
 
         HAL_Delay(50);
@@ -327,10 +383,10 @@ static void Motor2_Set(int16_t duty_percent)
    Encoder Functions（x4 resolution）
    ============================================================ */
 
-/* Encoder1: PC9=A, PC8=B のソフト4逓倍カウント */
+/* Encoder1: TIM1 エンコーダモード（16bit を符号拡張） */
 static int32_t Encoder1_Get(void)
 {
-    return s_enc1_count;
+    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim1);
 }
 
 /* Encoder2: TIM4 エンコーダモード（16bit を符号拡張） */
@@ -341,7 +397,7 @@ static int32_t Encoder2_Get(void)
 
 static void Encoder1_Reset(void)
 {
-    s_enc1_count = 0;
+    __HAL_TIM_SET_COUNTER(&htim1, 0);
 }
 
 static void Encoder2_Reset(void)
@@ -350,27 +406,52 @@ static void Encoder2_Reset(void)
 }
 
 /**
- * @brief Encoder1 の A/B いずれかのエッジで呼ばれ、グレイコードの遷移から +1/-1 を加える。
- *        状態 = (A<<1)|B。00->10->11->01->00 を正転(+1)とする。
- *        不正な遷移（取りこぼし）は 0 として無視する。
+ * @brief 旧: Encoder1 を PC8/PC9 の EXTI でソフト4逓倍していた処理。
+ *        実機の Encoder1 は PA8/PA9 (TIM1) につながっていたため、ハードウェアエンコーダに変更し、
+ *        この関数は何もしない（main.c からの呼び出しを残すためのスタブ）。
  */
 void MotorEncoderTest_EXTI_Callback(uint16_t gpio_pin)
 {
-    static const int8_t k_table[16] = {
-         0, -1, +1,  0,
-        +1,  0,  0, -1,
-        -1,  0,  0, +1,
-         0, +1, -1,  0
-    };
+    (void)gpio_pin;
+}
 
-    if (gpio_pin != ENC1_A_Pin && gpio_pin != ENC1_B_Pin) {
-        return;
-    }
+/* ============================================================
+   TIM1 エンコーダ初期化（Encoder1）
+   PA8 = TIM1_CH1 (AF1) = A相, PA9 = TIM1_CH2 (AF1) = B相（原本と同じ）
+   TI12 = 両エッジ 4逓倍、16bit
+   ============================================================ */
+static void MX_TIM1_Encoder_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    TIM_Encoder_InitTypeDef sConfig = {0};
 
-    uint8_t now = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
-                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
-    s_enc1_count += k_table[(s_enc1_prev << 2) | now];
-    s_enc1_prev = now;
+    __HAL_RCC_TIM1_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+
+    GPIO_InitStruct.Pin       = GPIO_PIN_8 | GPIO_PIN_9;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_PULLUP;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    htim1.Instance               = TIM1;
+    htim1.Init.Prescaler         = 0;
+    htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim1.Init.Period            = 65535U;
+    htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+
+    sConfig.EncoderMode   = TIM_ENCODERMODE_TI12;
+    sConfig.IC1Polarity   = TIM_ICPOLARITY_RISING;
+    sConfig.IC1Selection  = TIM_ICSELECTION_DIRECTTI;
+    sConfig.IC1Prescaler  = TIM_ICPSC_DIV1;
+    sConfig.IC1Filter     = 0x04;
+    sConfig.IC2Polarity   = TIM_ICPOLARITY_RISING;
+    sConfig.IC2Selection  = TIM_ICSELECTION_DIRECTTI;
+    sConfig.IC2Prescaler  = TIM_ICPSC_DIV1;
+    sConfig.IC2Filter     = 0x04;
+    if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK) Error_Handler();
 }
 
 /* ============================================================
