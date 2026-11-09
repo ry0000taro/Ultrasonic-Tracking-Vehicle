@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "ultrasonic.h"
 #include <stdio.h>
+#include "motor_encoder_test.h"
 
 /* USER CODE END Includes */
 
@@ -33,6 +34,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* 1 にするとモータ+エンコーダ動作確認メニューに入る（Issue #18）。0 なら従来の超音波デモ */
+#define MOTOR_ENCODER_TEST_MODE 0
 
 /* USER CODE END PD */
 
@@ -114,6 +117,10 @@ int main(void)
     HAL_Delay(500);
   }
   /* TEMP-BUZZER-TEST ここまで */
+
+#if MOTOR_ENCODER_TEST_MODE
+  MotorEncoderTest_Run();   /* 戻らない */
+#endif
 
   /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
   Ultrasonic_Init();
@@ -547,6 +554,7 @@ int __io_putchar(int ch)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   Ultrasonic_EXTI_Callback(GPIO_Pin);
+  MotorEncoderTest_EXTI_Callback(GPIO_Pin);
 }
 
 /* USER CODE END 4 */
