@@ -35,7 +35,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 /* 1 にするとモータ+エンコーダ動作確認メニューに入る（Issue #18）。0 なら従来の超音波デモ */
-#define MOTOR_ENCODER_TEST_MODE 0
+#define MOTOR_ENCODER_TEST_MODE 1
 
 /* USER CODE END PD */
 
@@ -109,6 +109,12 @@ int main(void)
   MX_TIM5_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+#if MOTOR_ENCODER_TEST_MODE
+  /* エンコーダ確認: ブザーのコードより前に入る。
+   * PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、ブザー鳴動コードを通すとアームが3回動く */
+  MotorEncoderTest_Run();   /* 戻らない */
+#endif
+
   /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
   for (int i = 0; i < 3; i++) {
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);   /* ON  */
@@ -117,10 +123,6 @@ int main(void)
     HAL_Delay(500);
   }
   /* TEMP-BUZZER-TEST ここまで */
-
-#if MOTOR_ENCODER_TEST_MODE
-  MotorEncoderTest_Run();   /* 戻らない */
-#endif
 
   /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
   Ultrasonic_Init();
