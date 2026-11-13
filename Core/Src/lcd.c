@@ -5,6 +5,7 @@
   ******************************************************************************
   */
 #include "lcd.h"
+#include <string.h>
 
 extern SPI_HandleTypeDef hspi2;   /* main.c で CubeMX が生成 */
 
@@ -133,53 +134,92 @@ void Lcd_FillScreen(uint16_t color)
   lcd_cs(1);
 }
 
-/* (x, y) のピクセル色を返す。上から: カラーバー / 青→水色のグラデーション(顔つき) / 白黒の縞 */
-static uint16_t test_pixel(int x, int y)
+/* ---- 状態表示（停止中 / 追従中 / エラー）----
+ * 日本語フォントを持っていないため、文字は 5x7 の英字（STOP / FOLLOW / ERROR）を拡大して描く。
+ * 色 + 図形 + 英字で状態を区別する。
+ *   STOP   : 赤の背景 + 白い四角     （停止中）
+ *   FOLLOW : 緑の背景 + 白い右向き三角（追従中）
+ *   ERROR  : 黄の背景 + 黒い三角と「!」（エラー）
+ */
+#define TEXT_SCALE   6          /* 5x7 を 6 倍 → 1 文字 30x42 px、字間 6 px */
+#define TEXT_TOP     200        /* 文字の上端 y */
+#define TEXT_CELL    (6 * TEXT_SCALE)
+
+/* 5x7 フォント（列ごとのビット。bit0 が上）。使う文字だけ持つ */
+static const uint8_t *glyph(char ch)
 {
-  /* 上段 0..59: 8色のカラーバー（白 黄 水 緑 紫 赤 青 黒） */
-  if (y < 60) {
-    static const uint16_t bars[8] = {
-      LCD_RGB(255,255,255), LCD_RGB(255,255,0), LCD_RGB(0,255,255), LCD_RGB(0,255,0),
-      LCD_RGB(255,0,255),   LCD_RGB(255,0,0),   LCD_RGB(0,0,255),   LCD_RGB(0,0,0)
-    };
-    return bars[(x * 8) / (int)LCD_WIDTH];
+  static const uint8_t E[5] = {0x7F,0x49,0x49,0x49,0x41};
+  static const uint8_t F[5] = {0x7F,0x09,0x09,0x09,0x01};
+  static const uint8_t L[5] = {0x7F,0x40,0x40,0x40,0x40};
+  static const uint8_t O[5] = {0x3E,0x41,0x41,0x41,0x3E};
+  static const uint8_t P[5] = {0x7F,0x09,0x09,0x09,0x06};
+  static const uint8_t R[5] = {0x7F,0x09,0x19,0x29,0x46};
+  static const uint8_t S[5] = {0x46,0x49,0x49,0x49,0x31};
+  static const uint8_t T[5] = {0x01,0x01,0x7F,0x01,0x01};
+  static const uint8_t W[5] = {0x3F,0x40,0x38,0x40,0x3F};
+  switch (ch) {
+    case 'E': return E;  case 'F': return F;  case 'L': return L;
+    case 'O': return O;  case 'P': return P;  case 'R': return R;
+    case 'S': return S;  case 'T': return T;  case 'W': return W;
+    default:  return NULL;
   }
-
-  /* 下段 280..319: 白黒の縞（8px ごと）。表示の向き・欠けの確認用 */
-  if (y >= 280) {
-    return (((x / 8) + ((y - 280) / 8)) & 1) ? LCD_WHITE : LCD_BLACK;
-  }
-
-  /* 中段: 縦のグラデーション背景 + 顔（黄色い円、目、口） */
-  const int cx = 120, cy = 165, r = 70;
-  int dx = x - cx, dy = y - cy;
-  int d2 = dx * dx + dy * dy;
-
-  /* 目（黒い円2つ） */
-  int ex = (dx < 0 ? -dx : dx) - 26;       /* 左右の目の中心 x = cx ± 26 */
-  int ey = dy + 22;                        /* 目の中心 y = cy - 22 */
-  if (ex * ex + ey * ey <= 10 * 10) {
-    return LCD_BLACK;
-  }
-  /* 口（下半分の細い円環） */
-  int my = dy - 8;                         /* 口の中心 y = cy + 8 */
-  int m2 = dx * dx + my * my;
-  if (my > 0 && m2 >= 38 * 38 && m2 <= 46 * 46) {
-    return LCD_BLACK;
-  }
-  /* 顔（黄色）と輪郭（赤） */
-  if (d2 <= (r - 3) * (r - 3)) {
-    return LCD_RGB(255, 220, 0);
-  }
-  if (d2 <= r * r) {
-    return LCD_RGB(220, 0, 0);
-  }
-  /* 背景: 上(青)から下(水色)へ */
-  int t = (y - 60) * 255 / 220;            /* 0..255 */
-  return LCD_RGB(0, t / 2, 128 + t / 2);
 }
 
-void Lcd_DrawTestImage(void)
+/* (x, y) が文字 text の「点灯」ピクセルなら 1 */
+static int text_on(const char *text, int x, int y)
+{
+  int n = (int)strlen(text);
+  int width = n * TEXT_CELL - TEXT_SCALE;
+  int x0 = ((int)LCD_WIDTH - width) / 2;
+  if (y < TEXT_TOP || y >= TEXT_TOP + 7 * TEXT_SCALE || x < x0 || x >= x0 + width) {
+    return 0;
+  }
+  int i   = (x - x0) / TEXT_CELL;
+  int col = ((x - x0) % TEXT_CELL) / TEXT_SCALE;      /* 0..5（5 は字間） */
+  int row = (y - TEXT_TOP) / TEXT_SCALE;              /* 0..6 */
+  const uint8_t *g = glyph(text[i]);
+  if (g == NULL || col > 4) {
+    return 0;
+  }
+  return (g[col] >> row) & 1;
+}
+
+static uint16_t state_pixel(LcdState s, int x, int y)
+{
+  const int cx = 120, cy = 110;
+  int dx = x - cx, dy = y - cy;
+  int adx = dx < 0 ? -dx : dx;
+  int ady = dy < 0 ? -dy : dy;
+
+  switch (s) {
+  case LCD_STATE_STOP:
+    if (text_on("STOP", x, y))    return LCD_WHITE;
+    if (adx <= 40 && ady <= 40)   return LCD_WHITE;               /* 白い四角 */
+    return LCD_RGB(200, 0, 0);
+
+  case LCD_STATE_FOLLOW:
+    if (text_on("FOLLOW", x, y))  return LCD_WHITE;
+    if (x >= 80 && x <= 160) {                                    /* 白い右向き三角 */
+      int h = (160 - x) * 50 / 80;
+      if (ady <= h)               return LCD_WHITE;
+    }
+    return LCD_RGB(0, 150, 0);
+
+  case LCD_STATE_ERROR:
+  default: {
+    const uint16_t yellow = LCD_RGB(255, 200, 0);
+    if (text_on("ERROR", x, y))   return LCD_BLACK;
+    if (y >= 60 && y <= 160 && adx <= (y - 60) * 55 / 100) {      /* 黒い三角 */
+      if (adx <= 6 && y >= 95 && y <= 135)   return yellow;       /* 「!」の棒 */
+      if (adx <= 7 && y >= 142 && y <= 152)  return yellow;       /* 「!」の点 */
+      return LCD_BLACK;
+    }
+    return yellow;
+  }
+  }
+}
+
+void Lcd_DrawState(LcdState s)
 {
   uint8_t row[LCD_WIDTH * 2U];
 
@@ -188,7 +228,7 @@ void Lcd_DrawTestImage(void)
   lcd_cs(0);
   for (int y = 0; y < (int)LCD_HEIGHT; y++) {
     for (int x = 0; x < (int)LCD_WIDTH; x++) {
-      uint16_t c = test_pixel(x, y);
+      uint16_t c = state_pixel(s, x, y);
       row[2 * x]     = (uint8_t)(c >> 8);
       row[2 * x + 1] = (uint8_t)c;
     }

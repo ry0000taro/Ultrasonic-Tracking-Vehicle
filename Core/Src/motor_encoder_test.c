@@ -217,7 +217,7 @@ static void Test_Buzzer(void)
 
 /* ============================================================
    Test 9: LCD test（MSP2807。CS=PB12, RESET=PA8, DC/RS=PA9, SCK=PB13, SDI=PB15）
-   カラーバー・グラデーション・顔・白黒の縞を表示する。
+   単色(赤→緑→青)のあと、状態表示(停止中 → 追従中 → エラー)を順に表示する。
    注意: PA8/PA9 を GPIO 出力にするため、Encoder1(TIM1, PA8/PA9) はリセットまで動かなくなる。
    ============================================================ */
 static void Test_Lcd(void)
@@ -240,10 +240,17 @@ static void Test_Lcd(void)
     Lcd_FillScreen(LCD_RGB(0, 0, 255));
     HAL_Delay(600);
 
-    Serial_Println("  Test image: color bars / face / checker");
-    Lcd_DrawTestImage();
+    /* 状態表示: 停止中 → 追従中 → エラー（各2秒） */
+    Serial_Println("  State: STOP (red / square)");
+    Lcd_DrawState(LCD_STATE_STOP);
+    HAL_Delay(2000);
+    Serial_Println("  State: FOLLOW (green / triangle)");
+    Lcd_DrawState(LCD_STATE_FOLLOW);
+    HAL_Delay(2000);
+    Serial_Println("  State: ERROR (yellow / warning)");
+    Lcd_DrawState(LCD_STATE_ERROR);
 
-    Serial_Println("[TEST 9] Done. Check: colors in order R,G,B, then bars on top, a face, checker at bottom.");
+    Serial_Println("[TEST 9] Done. Check: R,G,B fills, then STOP(red), FOLLOW(green), ERROR(yellow). Last one stays.");
 }
 
 /* ============================================================

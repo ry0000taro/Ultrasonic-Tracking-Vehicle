@@ -31,7 +31,14 @@ void Lcd_Init(void);
 /* 画面全体を1色で塗りつぶす */
 void Lcd_FillScreen(uint16_t color);
 
-/* 確認用の適当な画像（カラーバー + グラデーション + 顔）を表示する */
-void Lcd_DrawTestImage(void);
+/* 状態表示（停止中 / 追従中 / エラー） */
+typedef enum {
+  LCD_STATE_STOP = 0,    /* 停止中: 赤の背景 + 白い四角 + "STOP" */
+  LCD_STATE_FOLLOW,      /* 追従中: 緑の背景 + 白い右向き三角 + "FOLLOW" */
+  LCD_STATE_ERROR        /* エラー: 黄の背景 + 黒い警告三角 + "ERROR" */
+} LcdState;
+
+/* 状態を画面全体に表示する。日本語フォントがないため、文字は英字（STOP / FOLLOW / ERROR）。 */
+void Lcd_DrawState(LcdState s);
 
 #endif /* LCD_H */
