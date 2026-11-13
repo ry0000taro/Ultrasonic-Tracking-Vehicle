@@ -11,7 +11,8 @@
 
 #include "main.h"
 
-/* メニューを表示してテストを繰り返す（戻らない）。USART2 115200bps で操作する。 */
+/* Test モード。メニューを表示してテストを繰り返す（戻らない。リセットでモード選択に戻る）。
+ * USART2 115200bps で操作する。app_mode.c の AppMode_Run(APP_MODE_TEST) から呼ばれる。 */
 void MotorEncoderTest_Run(void);
 
 /* Encoder1（PC8/PC9）の EXTI 割り込みから呼ぶ。main.c の HAL_GPIO_EXTI_Callback に配線済み。 */

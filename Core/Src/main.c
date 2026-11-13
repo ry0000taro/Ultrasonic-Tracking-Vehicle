@@ -22,9 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ultrasonic.h"
-#include "distance_process.h"
 #include <stdio.h>
 #include "motor_encoder_test.h"
+#include "app_mode.h"
 
 /* USER CODE END Includes */
 
@@ -108,47 +108,13 @@ int main(void)
   MX_TIM5_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* 起動モードの選択（ビルドし直さずに切り替えられる）。
-   * 起動後 3 秒以内に Tera Term(115200bps) で 't' を送るとテストメニューに入る。
-   * 何も送らない / 't' 以外なら、従来どおりブザー鳴動 → 超音波デモが始まる。
-   * テストメニューはブザーのコードより前に入る。PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、
-   * ブザー鳴動コードを通すとアームが3回動くため。 */
-  printf("\r\nPress 't' within 3 s for the test menu (otherwise normal start)...\r\n");
-  {
-    uint8_t boot_key = 0;
-    if (HAL_UART_Receive(&huart2, &boot_key, 1, 3000U) == HAL_OK
-        && (boot_key == 't' || boot_key == 'T')) {
-      MotorEncoderTest_Run();   /* 戻らない（リセットで通常起動に戻る） */
-    }
+  /* 起動モードの選択（Test / SpeedControl / PositionControl / Combined）。
+   * Tera Term(115200bps) で番号を送る。Test は戻らない（リセットでモード選択に戻る）。
+   * 未実装のモードはメッセージを出してモード選択に戻る。
+   * これまでの動作確認（ブザー・超音波・距離データ処理・モータ・エンコーダ・液晶）は Test の中にある。 */
+  while (1) {
+    AppMode_Run(AppMode_Select());
   }
-
-  /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
-  for (int i = 0; i < 3; i++) {
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);   /* ON  */
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET); /* OFF */
-    HAL_Delay(500);
-  }
-  /* TEMP-BUZZER-TEST ここまで */
-
-  /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
-  Ultrasonic_Init();
-  /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
-   *   us_ok_mask の bit i = 1 ならセンサ i が応答あり（0x0F なら4個とも正常）。
-   *   us_check は 0:全部正常 / -1:応答なしのセンサあり。
-   *   結果はデバッガの Variables / Live Expressions で確認する。 */
-  uint8_t us_ok_mask = 0U;
-  int us_check = Ultrasonic_CheckConnection(&us_ok_mask);
-
-  /* Tera Term に接続確認の結果を表示する（115200bps, 8N1）。
-   * 距離は float のまま printf せず整数[mm]で表示する
-   * （%f は newlib-nano の設定を変えないと使えないため）。 */
-  printf("\r\n=== Ultrasonic connection check ===\r\n");
-  for (int i = 0; i < US_SENSOR_NUM; i++) {
-    printf("sensor%d: %s\r\n", i, (us_ok_mask & (1U << i)) ? "OK" : "NG (no response)");
-  }
-  printf("result=%d ok_mask=0x%02X\r\n", us_check, us_ok_mask);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -158,36 +124,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* 60ms ごとに組を交互に鳴らし、距離を表示する（接続確認後の動作確認用） */
-    static int pair_id = 0;
-    float dist[US_SENSOR_NUM];
-    int   no_resp[US_SENSOR_NUM];
-
-    Ultrasonic_Trigger(pair_id);
-    pair_id = (pair_id + 1) % US_PAIR_NUM;
-    HAL_Delay(60);
-    Ultrasonic_GetResult(dist, no_resp);
-
-    for (int i = 0; i < US_SENSOR_NUM; i++) {
-      if (no_resp[i]) {
-        printf("   -  ");
-      } else {
-        printf("%4d  ", (int)dist[i]);
-      }
-    }
-
-    /* 距離データ処理: 有効判定・対象検出・位置(X,Y)推定（整数[mm]で表示） */
-    UsResult us_res;
-    Distance_Process(dist, &us_res);
-    printf("| det=%d ", us_res.detect);
-    if (us_res.estimated) {
-      printf("X=%5d Y=%5d", (int)us_res.x_mm, (int)us_res.y_mm);
-    } else {
-      printf("X=   -  Y=   -");
-    }
-    printf("\r\n");
-  }
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
 }
 
 /**
