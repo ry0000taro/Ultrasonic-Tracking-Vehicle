@@ -101,7 +101,7 @@ void Lcd_Init(void)
   { const uint8_t d[] = {0x10};                         lcd_cmd_args(0xC1, d, sizeof d); }
   { const uint8_t d[] = {0x3E, 0x28};                   lcd_cmd_args(0xC5, d, sizeof d); }
   { const uint8_t d[] = {0x86};                         lcd_cmd_args(0xC7, d, sizeof d); }
-  { const uint8_t d[] = {0x48};                         lcd_cmd_args(CMD_MADCTL, d, sizeof d); }  /* 縦向き, BGR */
+  { const uint8_t d[] = {0x28};                         lcd_cmd_args(CMD_MADCTL, d, sizeof d); }  /* 横向き(MV), BGR */
   { const uint8_t d[] = {0x55};                         lcd_cmd_args(CMD_COLMOD, d, sizeof d); }  /* 16bit/pixel */
   { const uint8_t d[] = {0x00, 0x18};                   lcd_cmd_args(0xB1, d, sizeof d); }
   { const uint8_t d[] = {0x08, 0x82, 0x27};             lcd_cmd_args(0xB6, d, sizeof d); }
@@ -142,7 +142,7 @@ void Lcd_FillScreen(uint16_t color)
  *   ERROR  : 黄の背景 + 黒い三角と「!」（エラー）
  */
 #define TEXT_SCALE   6          /* 5x7 を 6 倍 → 1 文字 30x42 px、字間 6 px */
-#define TEXT_TOP     200        /* 文字の上端 y */
+#define TEXT_TOP     170        /* 文字の上端 y（高さ 42 px → 下端 212。画面の高さは 240） */
 #define TEXT_CELL    (6 * TEXT_SCALE)
 
 /* 5x7 フォント（列ごとのビット。bit0 が上）。使う文字だけ持つ */
@@ -186,7 +186,7 @@ static int text_on(const char *text, int x, int y)
 
 static uint16_t state_pixel(LcdState s, int x, int y)
 {
-  const int cx = 120, cy = 110;
+  const int cx = (int)LCD_WIDTH / 2, cy = 80;   /* 図形の中心（横向き 320x240 の上寄り） */
   int dx = x - cx, dy = y - cy;
   int adx = dx < 0 ? -dx : dx;
   int ady = dy < 0 ? -dy : dy;
@@ -199,8 +199,8 @@ static uint16_t state_pixel(LcdState s, int x, int y)
 
   case LCD_STATE_FOLLOW:
     if (text_on("FOLLOW", x, y))  return LCD_WHITE;
-    if (x >= 80 && x <= 160) {                                    /* 白い右向き三角 */
-      int h = (160 - x) * 50 / 80;
+    if (x >= cx - 40 && x <= cx + 40) {                           /* 白い右向き三角 */
+      int h = (cx + 40 - x) * 50 / 80;
       if (ady <= h)               return LCD_WHITE;
     }
     return LCD_RGB(0, 150, 0);
@@ -209,9 +209,9 @@ static uint16_t state_pixel(LcdState s, int x, int y)
   default: {
     const uint16_t yellow = LCD_RGB(255, 200, 0);
     if (text_on("ERROR", x, y))   return LCD_BLACK;
-    if (y >= 60 && y <= 160 && adx <= (y - 60) * 55 / 100) {      /* 黒い三角 */
-      if (adx <= 6 && y >= 95 && y <= 135)   return yellow;       /* 「!」の棒 */
-      if (adx <= 7 && y >= 142 && y <= 152)  return yellow;       /* 「!」の点 */
+    if (y >= cy - 50 && y <= cy + 50 && adx <= (y - (cy - 50)) * 55 / 100) {  /* 黒い三角 */
+      if (adx <= 6 && y >= cy - 15 && y <= cy + 25)  return yellow;   /* 「!」の棒 */
+      if (adx <= 7 && y >= cy + 32 && y <= cy + 42)  return yellow;   /* 「!」の点 */
       return LCD_BLACK;
     }
     return yellow;

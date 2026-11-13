@@ -16,8 +16,9 @@
 
 #include "main.h"
 
-#define LCD_WIDTH   240U
-#define LCD_HEIGHT  320U
+/* 横向き（MADCTL=0x28）: 幅 320 x 高さ 240。縦向きに戻すなら 240 x 320 にして MADCTL を 0x48 にする */
+#define LCD_WIDTH   320U
+#define LCD_HEIGHT  240U
 
 /* RGB565 の色（R5 G6 B5） */
 #define LCD_RGB(r, g, b)  ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
