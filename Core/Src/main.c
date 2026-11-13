@@ -539,11 +539,12 @@ int __io_putchar(int ch)
 }
 
 /* EXTI（外部ピン割り込み）が起きるたびに HAL から呼ばれる関数。
- * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。
+ * Echo ピン（PC0〜PC3）の変化を超音波ドライバに、エンコーダ1（PC8/PC9）の変化を確認テストに渡す。
  */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   Ultrasonic_EXTI_Callback(GPIO_Pin);
+  MotorEncoderTest_EXTI_Callback(GPIO_Pin);
 }
 
 /* USER CODE END 4 */

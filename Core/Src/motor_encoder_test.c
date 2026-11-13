@@ -9,7 +9,7 @@
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
   *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1 のまま。実機の配線がここだった)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PC9/PC8 (EXTI でソフト4逓倍。TE-01 もここに配線する)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -39,14 +39,15 @@ static TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)。ここで初期化す�
 
 static char g_tx_buf[256];
 
-static TIM_HandleTypeDef htim1;     /* Encoder1 (PA8/PA9)。ここで初期化する */
+/* Encoder1 のソフトカウント（PC9=A, PC8=B の EXTI 割り込みで更新） */
+static volatile int32_t s_enc1_count = 0;
+static volatile uint8_t s_enc1_prev  = 0;
 
 /* ============================================================
    Function Prototypes
    ============================================================ */
 static void MotorEncoderTest_Init(void);
 static void MX_TIM13_14_PWM_Init(void);
-static void MX_TIM1_Encoder_Init(void);
 static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
@@ -106,9 +107,15 @@ static void MotorEncoderTest_Init(void)
     enc2_gpio.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &enc2_gpio);
 
-    /* Encoder1: TIM1（PA8/PA9）。実機の配線に合わせてハードウェアエンコーダにした */
-    MX_TIM1_Encoder_Init();
-    HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+    /* Encoder1 (PC8/PC9): CubeMX の設定は NOPULL なので、プルアップに再設定する（EXTI モードは維持） */
+    GPIO_InitTypeDef enc1_gpio = {0};
+    enc1_gpio.Pin  = ENC1_B_Pin | ENC1_A_Pin;
+    enc1_gpio.Mode = GPIO_MODE_IT_RISING_FALLING;
+    enc1_gpio.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOC, &enc1_gpio);
+    s_enc1_prev = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
+                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
+    s_enc1_count = 0;
 
     /* Encoder2: TIM4（CubeMX 生成）, Motor2: TIM3（CubeMX 生成） */
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
@@ -162,10 +169,10 @@ static void Test_Encoder_Monitor(void)
 
         /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 "\r  Enc1 cnt=%7ld (PC9 A=%d PC8 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
                  (long)Encoder1_Get(),
-                 (int)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8),
-                 (int)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9),
+                 (int)HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin),
+                 (int)HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin),
                  (long)Encoder2_Get(),
                  (int)HAL_GPIO_ReadPin(ENC2_A_GPIO_Port, ENC2_A_Pin),
                  (int)HAL_GPIO_ReadPin(ENC2_B_GPIO_Port, ENC2_B_Pin));
@@ -388,10 +395,10 @@ static void Motor2_Set(int16_t duty_percent)
    Encoder Functions（x4 resolution）
    ============================================================ */
 
-/* Encoder1: TIM1 エンコーダモード（16bit を符号拡張） */
+/* Encoder1: PC9=A, PC8=B のソフト4逓倍カウント */
 static int32_t Encoder1_Get(void)
 {
-    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim1);
+    return s_enc1_count;
 }
 
 /* Encoder2: TIM4 エンコーダモード（16bit を符号拡張） */
@@ -402,7 +409,7 @@ static int32_t Encoder2_Get(void)
 
 static void Encoder1_Reset(void)
 {
-    __HAL_TIM_SET_COUNTER(&htim1, 0);
+    s_enc1_count = 0;
 }
 
 static void Encoder2_Reset(void)
@@ -410,43 +417,28 @@ static void Encoder2_Reset(void)
     __HAL_TIM_SET_COUNTER(&htim4, 0);
 }
 
-/* ============================================================
-   TIM1 エンコーダ初期化（Encoder1）
-   PA8 = TIM1_CH1 (AF1) = A相, PA9 = TIM1_CH2 (AF1) = B相（原本と同じ）
-   TI12 = 両エッジ 4逓倍、16bit
-   ============================================================ */
-static void MX_TIM1_Encoder_Init(void)
+/**
+ * @brief Encoder1 の A/B いずれかのエッジで呼ばれ、グレイコードの遷移から +1/-1 を加える。
+ *        状態 = (A<<1)|B。00->10->11->01->00 を正転(+1)とする。
+ *        不正な遷移（取りこぼし）は 0 として無視する。
+ */
+void MotorEncoderTest_EXTI_Callback(uint16_t gpio_pin)
 {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    TIM_Encoder_InitTypeDef sConfig = {0};
+    static const int8_t k_table[16] = {
+         0, -1, +1,  0,
+        +1,  0,  0, -1,
+        -1,  0,  0, +1,
+         0, +1, -1,  0
+    };
 
-    __HAL_RCC_TIM1_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
+    if (gpio_pin != ENC1_A_Pin && gpio_pin != ENC1_B_Pin) {
+        return;
+    }
 
-    GPIO_InitStruct.Pin       = GPIO_PIN_8 | GPIO_PIN_9;
-    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull      = GPIO_PULLUP;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    htim1.Instance               = TIM1;
-    htim1.Init.Prescaler         = 0;
-    htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    htim1.Init.Period            = 65535U;
-    htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
-    htim1.Init.RepetitionCounter = 0;
-
-    sConfig.EncoderMode   = TIM_ENCODERMODE_TI12;
-    sConfig.IC1Polarity   = TIM_ICPOLARITY_RISING;
-    sConfig.IC1Selection  = TIM_ICSELECTION_DIRECTTI;
-    sConfig.IC1Prescaler  = TIM_ICPSC_DIV1;
-    sConfig.IC1Filter     = 0x04;
-    sConfig.IC2Polarity   = TIM_ICPOLARITY_RISING;
-    sConfig.IC2Selection  = TIM_ICSELECTION_DIRECTTI;
-    sConfig.IC2Prescaler  = TIM_ICPSC_DIV1;
-    sConfig.IC2Filter     = 0x04;
-    if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK) Error_Handler();
+    uint8_t now = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
+                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
+    s_enc1_count += k_table[(s_enc1_prev << 2) | now];
+    s_enc1_prev = now;
 }
 
 /* ============================================================
