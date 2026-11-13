@@ -20,6 +20,7 @@
 #include "lcd.h"
 #include "ultrasonic.h"
 #include "distance_process.h"
+#include "distance_acquire.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -293,7 +294,7 @@ static void Test_DistanceProcess(void)
     char c = 0;
     Serial_ReceiveChar(&c, HAL_MAX_DELAY);
 
-    Ultrasonic_Init();
+    DistanceAcq_Init();   /* Ultrasonic_Init を含む */
 
     uint8_t ok_mask = 0U;
     int check = Ultrasonic_CheckConnection(&ok_mask);
@@ -302,18 +303,17 @@ static void Test_DistanceProcess(void)
 
     Serial_Println("  S0(out-L) S1(in-L) S2(in-R) S3(out-R) | det  X[mm]  Y[mm]   ('-' = none)");
 
-    int pair_id = 0;
     while (1)
     {
         if (Serial_ReceiveChar(&c, 0) && (c == 'q' || c == 'Q')) break;
 
-        float dist[US_SENSOR_NUM];
-        int   no_resp[US_SENSOR_NUM];
+        /* 待たずに回す。新しいデータができたときだけ表示する（Serial_ReceiveChar(0) は待たない） */
+        if (!DistanceAcq_Task()) continue;
 
-        Ultrasonic_Trigger(pair_id);
-        pair_id = (pair_id + 1) % US_PAIR_NUM;
-        HAL_Delay(60);
-        Ultrasonic_GetResult(dist, no_resp);
+        float    dist[US_SENSOR_NUM];
+        int      no_resp[US_SENSOR_NUM];
+        UsResult res;
+        if (DistanceAcq_Get(dist, no_resp, &res) != 0) continue;
 
         Serial_Print("\r ");
         for (int i = 0; i < US_SENSOR_NUM; i++)
@@ -323,8 +323,6 @@ static void Test_DistanceProcess(void)
             Serial_Print(g_tx_buf);
         }
 
-        UsResult res;
-        Distance_Process(dist, &res);
         if (res.estimated) snprintf(g_tx_buf, sizeof(g_tx_buf), "| %d  %5d  %5d  ", res.detect, (int)res.x_mm, (int)res.y_mm);
         else               snprintf(g_tx_buf, sizeof(g_tx_buf), "| %d      -      -  ", res.detect);
         Serial_Print(g_tx_buf);
