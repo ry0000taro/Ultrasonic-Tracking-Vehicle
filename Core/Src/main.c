@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ultrasonic.h"
+#include "distance_process.h"
 #include <stdio.h>
 #include "motor_encoder_test.h"
 
@@ -173,6 +174,16 @@ int main(void)
       } else {
         printf("%4d  ", (int)dist[i]);
       }
+    }
+
+    /* 距離データ処理: 有効判定・対象検出・位置(X,Y)推定（整数[mm]で表示） */
+    UsResult us_res;
+    Distance_Process(dist, &us_res);
+    printf("| det=%d ", us_res.detect);
+    if (us_res.estimated) {
+      printf("X=%5d Y=%5d", (int)us_res.x_mm, (int)us_res.y_mm);
+    } else {
+      printf("X=   -  Y=   -");
     }
     printf("\r\n");
   }

@@ -12,7 +12,7 @@ STM32F446RET6 (NUCLEO-F446RE)、STM32CubeIDE (CubeMX生成コード + HAL) ベ�
 
 ## ⚠️ ドキュメントの優先順位(重要)
 
-`docs/` には3つの文書があるが、**鮮度が違う**。矛盾したら新しい方(v0.1)を正とすること。
+`docs/` には4つの文書があるが、**鮮度が違う**。矛盾したら新しい方(v0.1)を正とすること。
 
 1. **`docs/requirements_by_part.md`** (v0.1, 2026-11-02) — **最新・正**。部品別要件・決定事項(D-01〜D-14)・
    TODOリスト。実装前に必ずここを読む。
@@ -22,6 +22,8 @@ STM32F446RET6 (NUCLEO-F446RE)、STM32CubeIDE (CubeMX生成コード + HAL) ベ�
 3. `docs/pin_assignment.md` (v0.2, 2026-11-02) — ピン配置は実質最新(Core/Inc/main.h の `*_Pin` 定義と
    一致している)が、文書自体は `requirements_by_part.md` から「参照しない」扱いにされている。ピン配置の
    一次ソースは Notion「マイコンピン対応表」。
+4. `docs/distance_process.md` (2026-11-13) — 距離データ処理(`Distance_Process`)の**実装**メモ。
+   Notion「超音波計測 機能モジュール表」と食い違う箇所は、こちら(実装)を正とする。
 
 `requirements_by_part.md` 内の `D-xx`(決定事項)と `SOFT-xx`/`US-xx`/`BZ-xx` などの部品別ID、および
 末尾の TODO セクションが、実装すべきことと既知の未決事項(保留中の設計判断)の一覧になっている。新しい
@@ -33,7 +35,8 @@ STM32F446RET6 (NUCLEO-F446RE)、STM32CubeIDE (CubeMX生成コード + HAL) ベ�
 
 - `Core/`, `Drivers/`, `*.ioc`, `.cproject`, `.project`, `*.ld` — **本体**。STM32CubeIDE プロジェクト
   (CubeMX生成コード + HAL)。`Core/Src/main.c` がエントリポイント、`Core/Src/ultrasonic.c` /
-  `Core/Inc/ultrasonic.h` が実装済みの超音波計測ドライバ。
+  `Core/Inc/ultrasonic.h` が実装済みの超音波計測ドライバ、`Core/Src/distance_process.c` /
+  `Core/Inc/distance_process.h` が距離データ処理(位置推定)。
 - `Ultrasonic-Tracking-Vehicle/` — **空のCMakeスキャフォールド**(未追跡/未コミット)。`Src/main.c` は
   25行のテンプレートのままで、`ultrasonic.c` も `Core/`/`Drivers/` も存在しない。開発対象ではない。
   紛らわしいので触らないこと。
@@ -58,8 +61,10 @@ CubeMXで `.ioc` を編集したときは、CubeIDE で "Generate Code" する�
 
 `docs/requirements_by_part.md` の SOFT-01 により、ソフトウェアは4層構成を志向している
 (表示・操作 → 状態・判定 → 制御 → ドライバ、依存は上から下の一方向)。**現時点で実装済みなのは
-ドライバ層の超音波計測のみ**で、状態管理・追従制御・液晶・ブザー・モータ制御は未実装(`main()` は
-接続確認後、距離を周期的に取得してUSART2(115200bps)にprintfするだけのデモループ)。
+ドライバ層の超音波計測と、制御層の距離データ処理(位置推定)**。状態管理・追従制御(位置制御/向き制御/
+速度制御)・ブザー・本番のモータ制御は未実装。`lcd.c`(液晶の簡易ドライバ)と `motor_encoder_test.c`
+(起動時に 't' で入るテストメニュー)は動作確認用のコード。`main()` は接続確認後、距離を周期的に取得し、
+`Distance_Process` の結果(det / X / Y)とともに USART2(115200bps)に printf するだけのデモループ。
 
 ### 超音波計測 (`Core/Src/ultrasonic.c`)
 
@@ -74,6 +79,15 @@ CubeMXで `.ioc` を編集したときは、CubeIDE で "Generate Code" する�
   `__enable_irq` で保護する(ロックフリーに近い設計、ミューテックス等は使わない)。
 - `s_pin[]`(センサ番号→Trig/Echoピン)と `s_pair_mask[]`(組→センサ)がハードウェア結線の唯一の定義
   箇所。配線変更時はここだけ直す。
+
+### 距離データ処理 (`Core/Src/distance_process.c`)
+
+- 制御層。`Ultrasonic_GetResult` で得た4個の距離を `Distance_Process(dist, &UsResult)` に渡す。
+  20〜4000mm を有効とし、300mm 以内で `detect=1`、有効2個以上でガウス・ニュートン法により対象の位置
+  (X, Y)を推定する(`estimated`、返り値 0/-1/-2)。センサ位置 `DP_SENSOR_X_MM`/`DP_SENSOR_Y_MM` は
+  図面から読んだ仮の値、初回の追従距離 `DP_INIT_FOLLOW_MM`(500mm)も仮の値。
+- **Notion の仕様と食い違う点・既知の制限(残差検査なし、有効1個では推定しない等)は
+  `docs/distance_process.md` が正**(実装を優先して書いてある)。実機での X・Y の確認は未。
 
 ### ピン配置の要点(`Core/Inc/main.h` の `*_Pin` 定義が正)
 
