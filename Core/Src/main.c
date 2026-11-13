@@ -115,15 +115,6 @@ int main(void)
   MotorEncoderTest_Run();   /* 戻らない */
 #endif
 
-  /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
-  for (int i = 0; i < 3; i++) {
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);   /* ON  */
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET); /* OFF */
-    HAL_Delay(500);
-  }
-  /* TEMP-BUZZER-TEST ここまで */
-
   /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
   Ultrasonic_Init();
   /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
@@ -549,11 +540,10 @@ int __io_putchar(int ch)
 
 /* EXTI（外部ピン割り込み）が起きるたびに HAL から呼ばれる関数。
  * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。
- * エンコーダ1（PC8/PC9）の処理を足すときは、ここで GPIO_Pin を見て振り分ける。 */
+ */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   Ultrasonic_EXTI_Callback(GPIO_Pin);
-  MotorEncoderTest_EXTI_Callback(GPIO_Pin);
 }
 
 /* USER CODE END 4 */

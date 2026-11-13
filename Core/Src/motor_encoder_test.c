@@ -218,7 +218,7 @@ static void Test_Motor1_Encoder1(void)
 {
     Serial_Println("\r\n[TEST 5] Motor1 + Encoder1 Test");
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Motor1 ramps 0->%d%%%% duty then holds. Encoder1 count is displayed.\r\n",
+             "Motor1 ramps 0->%d%% duty then holds. Encoder1 count is displayed.\r\n",
              ENCODER_TEST_DUTY);
     Serial_Print(g_tx_buf);
     Serial_Println("Press Enter to start, 'q' to stop...");
@@ -229,33 +229,26 @@ static void Test_Motor1_Encoder1(void)
     Encoder1_Reset();
     Encoder2_Reset();
 
-    /* Ramp up: 0% -> ENCODER_TEST_DUTY% in steps of 5% */
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Ramp up: 0 -> %d%%\r\n", ENCODER_TEST_DUTY);
-    Serial_Print(g_tx_buf);
-    for (int d = 0; d <= ENCODER_TEST_DUTY; d += 5)
-    {
-        Motor1_Set((int16_t)d);
-        /* 加速中も 50ms ごとにエンコーダの値を表示する（300ms = 50ms x 6） */
-        for (int i = 0; i < 6; i++)
-        {
-            snprintf(g_tx_buf, sizeof(g_tx_buf),
-                     "\r  Motor1 duty = %2d%%   Encoder1 count = %7ld   Encoder2 count = %7ld   ",
-                     d, (long)Encoder1_Get(), (long)Encoder2_Get());
-            Serial_Print(g_tx_buf);
-            HAL_Delay(50);
-        }
-    }
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  Hold at %d%%%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
-    Serial_Print(g_tx_buf);
+    /* 0% から ENCODER_TEST_DUTY% まで 300ms(=50ms x 6) ごとに 5% ずつ上げ、到達後は保持する。
+     * 昇圧中も含め、ループのたびに 'q' を確認する。 */
+    Serial_Println("  Ramp up in steps of 5% -- press 'q' to stop");
 
     int32_t prev_count = Encoder1_Get();
     int32_t count = 0;
+    int d = 0;
 
-    while (1)
+    Motor1_Set(0);
+    for (int tick = 0; ; tick++)
     {
         if (Serial_ReceiveChar(&c, 10))
         {
             if (c == 'q' || c == 'Q') break;
+        }
+
+        if (tick % 6 == 0 && d <= ENCODER_TEST_DUTY)
+        {
+            Motor1_Set((int16_t)d);
+            d += 5;
         }
 
         count = Encoder1_Get();
@@ -366,54 +359,29 @@ static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms)
    positive -> forward (IN1=PWM, IN2=0) / negative -> reverse (IN1=0, IN2=PWM) / zero -> coast
    ============================================================ */
 
-/* Motor1: IN1=PA6 (TIM13_CH1), IN2=PA7 (TIM14_CH1) */
-static void Motor1_Set(int16_t duty_percent)
+/* duty をクランプし、正転側 CCR / 逆転側 CCR に振り分ける共通処理 */
+static void Motor_Set(TIM_HandleTypeDef *h_in1, uint32_t ch_in1,
+                      TIM_HandleTypeDef *h_in2, uint32_t ch_in2, int16_t duty_percent)
 {
     if (duty_percent >  PWM_DUTY_MAX) duty_percent =  PWM_DUTY_MAX;
     if (duty_percent < -PWM_DUTY_MAX) duty_percent = -PWM_DUTY_MAX;
 
     uint32_t cmp = (uint32_t)((PWM_PERIOD + 1U) * (uint32_t)abs(duty_percent) / 100U);
 
-    if (duty_percent > 0)
-    {
-        __HAL_TIM_SET_COMPARE(&htim13, TIM_CHANNEL_1, cmp); /* IN1 = PWM */
-        __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, 0U);  /* IN2 = 0   */
-    }
-    else if (duty_percent < 0)
-    {
-        __HAL_TIM_SET_COMPARE(&htim13, TIM_CHANNEL_1, 0U);  /* IN1 = 0   */
-        __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, cmp); /* IN2 = PWM */
-    }
-    else
-    {
-        __HAL_TIM_SET_COMPARE(&htim13, TIM_CHANNEL_1, 0U);  /* coast */
-        __HAL_TIM_SET_COMPARE(&htim14, TIM_CHANNEL_1, 0U);
-    }
+    __HAL_TIM_SET_COMPARE(h_in1, ch_in1, (duty_percent > 0) ? cmp : 0U);
+    __HAL_TIM_SET_COMPARE(h_in2, ch_in2, (duty_percent < 0) ? cmp : 0U);
+}
+
+/* Motor1: IN1=PA6 (TIM13_CH1), IN2=PA7 (TIM14_CH1) */
+static void Motor1_Set(int16_t duty_percent)
+{
+    Motor_Set(&htim13, TIM_CHANNEL_1, &htim14, TIM_CHANNEL_1, duty_percent);
 }
 
 /* Motor2: IN1=PB4 (TIM3_CH1), IN2=PB5 (TIM3_CH2) */
 static void Motor2_Set(int16_t duty_percent)
 {
-    if (duty_percent >  PWM_DUTY_MAX) duty_percent =  PWM_DUTY_MAX;
-    if (duty_percent < -PWM_DUTY_MAX) duty_percent = -PWM_DUTY_MAX;
-
-    uint32_t cmp = (uint32_t)((PWM_PERIOD + 1U) * (uint32_t)abs(duty_percent) / 100U);
-
-    if (duty_percent > 0)
-    {
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, cmp);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0U);
-    }
-    else if (duty_percent < 0)
-    {
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0U);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, cmp);
-    }
-    else
-    {
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0U);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0U);
-    }
+    Motor_Set(&htim3, TIM_CHANNEL_1, &htim3, TIM_CHANNEL_2, duty_percent);
 }
 
 /* ============================================================
@@ -440,16 +408,6 @@ static void Encoder1_Reset(void)
 static void Encoder2_Reset(void)
 {
     __HAL_TIM_SET_COUNTER(&htim4, 0);
-}
-
-/**
- * @brief 旧: Encoder1 を PC8/PC9 の EXTI でソフト4逓倍していた処理。
- *        実機の Encoder1 は PA8/PA9 (TIM1) につながっていたため、ハードウェアエンコーダに変更し、
- *        この関数は何もしない（main.c からの呼び出しを残すためのスタブ）。
- */
-void MotorEncoderTest_EXTI_Callback(uint16_t gpio_pin)
-{
-    (void)gpio_pin;
 }
 
 /* ============================================================

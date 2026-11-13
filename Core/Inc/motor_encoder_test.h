@@ -14,7 +14,4 @@
 /* メニューを表示してテストを繰り返す（戻らない）。USART2 115200bps で操作する。 */
 void MotorEncoderTest_Run(void);
 
-/* Encoder1（PC8/PC9）の EXTI 割り込みから呼ぶ。main.c の HAL_GPIO_EXTI_Callback に配線済み。 */
-void MotorEncoderTest_EXTI_Callback(uint16_t gpio_pin);
-
 #endif /* MOTOR_ENCODER_TEST_H */
