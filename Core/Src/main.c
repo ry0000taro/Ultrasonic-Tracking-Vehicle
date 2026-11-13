@@ -34,8 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 1 にするとモータ+エンコーダ動作確認メニューに入る（Issue #18）。0 なら従来の超音波デモ */
-#define MOTOR_ENCODER_TEST_MODE 1
 
 /* USER CODE END PD */
 
@@ -109,11 +107,19 @@ int main(void)
   MX_TIM5_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-#if MOTOR_ENCODER_TEST_MODE
-  /* エンコーダ確認: ブザーのコードより前に入る。
-   * PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、ブザー鳴動コードを通すとアームが3回動く */
-  MotorEncoderTest_Run();   /* 戻らない */
-#endif
+  /* 起動モードの選択（ビルドし直さずに切り替えられる）。
+   * 起動後 3 秒以内に Tera Term(115200bps) で 't' を送るとテストメニューに入る。
+   * 何も送らない / 't' 以外なら、従来どおりブザー鳴動 → 超音波デモが始まる。
+   * テストメニューはブザーのコードより前に入る。PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、
+   * ブザー鳴動コードを通すとアームが3回動くため。 */
+  printf("\r\nPress 't' within 3 s for the test menu (otherwise normal start)...\r\n");
+  {
+    uint8_t boot_key = 0;
+    if (HAL_UART_Receive(&huart2, &boot_key, 1, 3000U) == HAL_OK
+        && (boot_key == 't' || boot_key == 'T')) {
+      MotorEncoderTest_Run();   /* 戻らない（リセットで通常起動に戻る） */
+    }
+  }
 
   /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
   for (int i = 0; i < 3; i++) {
