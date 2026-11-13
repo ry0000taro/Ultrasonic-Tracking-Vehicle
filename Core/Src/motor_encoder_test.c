@@ -17,6 +17,7 @@
   ******************************************************************************
   */
 #include "motor_encoder_test.h"
+#include "lcd.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -51,6 +52,7 @@ static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
+static void Test_Lcd(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -84,8 +86,9 @@ void MotorEncoderTest_Run(void)
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
+                case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 5, 6, 7 or 8.");
+                    Serial_Println("[!] Invalid input. Enter 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -134,6 +137,7 @@ static void Print_Menu(void)
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
     Serial_Println(" 8 : Buzzer test (PA0)");
+    Serial_Println(" 9 : LCD test (PA8/PA9 become GPIO: Encoder1 stops until reset)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
 }
@@ -209,6 +213,37 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 9: LCD test（MSP2807。CS=PB12, RESET=PA8, DC/RS=PA9, SCK=PB13, SDI=PB15）
+   カラーバー・グラデーション・顔・白黒の縞を表示する。
+   注意: PA8/PA9 を GPIO 出力にするため、Encoder1(TIM1, PA8/PA9) はリセットまで動かなくなる。
+   ============================================================ */
+static void Test_Lcd(void)
+{
+    Serial_Println("\r\n[TEST 9] LCD test (MSP2807, ILI9341 assumed)");
+    Serial_Println("NOTE: PA8/PA9 become GPIO outputs. Encoder1 stops until reset.");
+    Serial_Println("Press Enter to start...");
+
+    char c = 0;
+    Serial_ReceiveChar(&c, HAL_MAX_DELAY);
+
+    Lcd_Init();
+
+    /* 単色 赤→緑→青 を順に表示（表示されるか、色が合っているかの確認） */
+    Serial_Println("  Fill: red -> green -> blue");
+    Lcd_FillScreen(LCD_RGB(255, 0, 0));
+    HAL_Delay(600);
+    Lcd_FillScreen(LCD_RGB(0, 255, 0));
+    HAL_Delay(600);
+    Lcd_FillScreen(LCD_RGB(0, 0, 255));
+    HAL_Delay(600);
+
+    Serial_Println("  Test image: color bars / face / checker");
+    Lcd_DrawTestImage();
+
+    Serial_Println("[TEST 9] Done. Check: colors in order R,G,B, then bars on top, a face, checker at bottom.");
 }
 
 /* ============================================================
