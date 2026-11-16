@@ -34,8 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 1 にするとモータ+エンコーダ動作確認メニューに入る（Issue #18）。0 なら従来の超音波デモ */
-#define MOTOR_ENCODER_TEST_MODE 1
 
 /* USER CODE END PD */
 
@@ -118,29 +116,8 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-#if MOTOR_ENCODER_TEST_MODE
-  /* エンコーダ確認: ブザーのコードより前に入る。
-   * PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、ブザー鳴動コードを通すとアームが3回動く */
-  MotorEncoderTest_Run();   /* 戻らない */
-#endif
-
-  /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
-  Ultrasonic_Init();
-  /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
-   *   us_ok_mask の bit i = 1 ならセンサ i が応答あり（0x0F なら4個とも正常）。
-   *   us_check は 0:全部正常 / -1:応答なしのセンサあり。
-   *   結果はデバッガの Variables / Live Expressions で確認する。 */
-  uint8_t us_ok_mask = 0U;
-  int us_check = Ultrasonic_CheckConnection(&us_ok_mask);
-
-  /* Tera Term に接続確認の結果を表示する（115200bps, 8N1）。
-   * 距離は float のまま printf せず整数[mm]で表示する
-   * （%f は newlib-nano の設定を変えないと使えないため）。 */
-  printf("\r\n=== Ultrasonic connection check ===\r\n");
-  for (int i = 0; i < US_SENSOR_NUM; i++) {
-    printf("sensor%d: %s\r\n", i, (us_ok_mask & (1U << i)) ? "OK" : "NG (no response)");
-  }
-  printf("result=%d ok_mask=0x%02X\r\n", us_check, us_ok_mask);
+  /* 動作確認メニュー（USART2 115200bps）。3: 超音波の本処理、5〜9: モータ・エンコーダ・ブザー・液晶の確認。戻らない */
+  MotorEncoderTest_Run();
 
   /* USER CODE END 2 */
 
@@ -151,24 +128,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* 60ms ごとに組を交互に鳴らし、距離を表示する（接続確認後の動作確認用） */
-    static int pair_id = 0;
-    float dist[US_SENSOR_NUM];
-    int   no_resp[US_SENSOR_NUM];
-
-    Ultrasonic_Trigger(pair_id);
-    pair_id = (pair_id + 1) % US_PAIR_NUM;
-    HAL_Delay(60);
-    Ultrasonic_GetResult(dist, no_resp);
-
-    for (int i = 0; i < US_SENSOR_NUM; i++) {
-      if (no_resp[i]) {
-        printf("   -  ");
-      } else {
-        printf("%4d  ", (int)dist[i]);
-      }
-    }
-    printf("\r\n");
   }
   /* USER CODE END 3 */
 }
@@ -286,7 +245,7 @@ static void MX_TIM1_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 4;
+  sConfig.IC1Filter = 0;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
@@ -672,8 +631,7 @@ int __io_putchar(int ch)
 }
 
 /* EXTI（外部ピン割り込み）が起きるたびに HAL から呼ばれる関数。
- * Echo ピン（PC0〜PC3）の変化を超音波ドライバに、
- */
+ * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   Ultrasonic_EXTI_Callback(GPIO_Pin);

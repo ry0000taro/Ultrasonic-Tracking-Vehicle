@@ -18,6 +18,7 @@
   */
 #include "motor_encoder_test.h"
 #include "lcd_ili9341.h"
+#include "ultrasonic.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -50,6 +51,7 @@ static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
 static void Test_Lcd(void);
+static void Test_Ultrasonic(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -79,13 +81,14 @@ void MotorEncoderTest_Run(void)
 
             switch (cmd)
             {
+                case '3': Test_Ultrasonic();        break;
                 case '5': Test_Motor1_Encoder1();   break;
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 5, 6, 7, 8 or 9.");
+                    Serial_Println("[!] Invalid input. Enter 3, 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -134,6 +137,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
+    Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
@@ -214,6 +218,53 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 3: 超音波（本処理）。接続確認のあと、距離[mm]を 60ms ごとに表示する。'q' で終了
+   ============================================================ */
+static void Test_Ultrasonic(void)
+{
+    Serial_Println("\r\n[TEST 3] Ultrasonic. 'q' to stop.");
+
+    Ultrasonic_Init();      /* TIM5 を 1us のストップウォッチとして動かす（何度呼んでも問題ない） */
+
+    uint8_t ok_mask = 0U;
+    int check = Ultrasonic_CheckConnection(&ok_mask);
+    for (int i = 0; i < US_SENSOR_NUM; i++)
+    {
+        snprintf(g_tx_buf, sizeof(g_tx_buf), "sensor%d: %s\r\n", i,
+                 (ok_mask & (1U << i)) ? "OK" : "NG (no response)");
+        Serial_Print(g_tx_buf);
+    }
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "result=%d ok_mask=0x%02X\r\n", check, ok_mask);
+    Serial_Print(g_tx_buf);
+
+    int pair_id = 0;
+    while (1)
+    {
+        char c = 0;
+        if (Serial_ReceiveChar(&c, 10) && (c == 'q' || c == 'Q')) break;
+
+        /* 60ms ごとに組を交互に鳴らす（受信待ち 10ms + 待ち 50ms） */
+        Ultrasonic_Trigger(pair_id);
+        pair_id = (pair_id + 1) % US_PAIR_NUM;
+        HAL_Delay(50);
+
+        float dist[US_SENSOR_NUM];
+        int   no_resp[US_SENSOR_NUM];
+        Ultrasonic_GetResult(dist, no_resp);
+
+        Serial_Print("\r");
+        for (int i = 0; i < US_SENSOR_NUM; i++)
+        {
+            if (no_resp[i]) snprintf(g_tx_buf, sizeof(g_tx_buf), "   -  ");
+            else            snprintf(g_tx_buf, sizeof(g_tx_buf), "%4d  ", (int)dist[i]);
+            Serial_Print(g_tx_buf);
+        }
+    }
+
+    Serial_Println("\r\n[TEST 3] Done.");
 }
 
 /* ============================================================
