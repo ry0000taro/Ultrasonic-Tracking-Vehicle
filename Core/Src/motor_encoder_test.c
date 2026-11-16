@@ -9,7 +9,7 @@
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
   *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PC9/PC8 (EXTI でソフト4逓倍。TE-01 もここに配線する)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1, CubeMX 生成の htim1。液晶 RESET/DC を PB14/PB10 に移した)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -17,41 +17,39 @@
   ******************************************************************************
   */
 #include "motor_encoder_test.h"
+#include "lcd_ili9341.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+extern TIM_HandleTypeDef htim1;     /* Encoder1（CubeMX 生成） */
 extern TIM_HandleTypeDef htim3;     /* Motor2 PWM（CubeMX 生成） */
 extern TIM_HandleTypeDef htim4;     /* Encoder2（CubeMX 生成） */
 extern UART_HandleTypeDef huart2;   /* Serial（CubeMX 生成） */
 
-static TIM_HandleTypeDef htim13;    /* Motor1 IN1 (PA6)。ここで初期化する */
-static TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)。ここで初期化する */
+extern TIM_HandleTypeDef htim13;    /* Motor1 IN1 (PA6)（CubeMX 生成） */
+extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 
 /* ============================================================
    Constants（原本のまま）
    ============================================================ */
-#define PWM_PRESCALER   4U          /* CubeMX の TIM3 と同値 */
-#define PWM_PERIOD      55999UL     /* 84MHz / 300Hz / 5 - 1 */
+#define PWM_PERIOD      55999UL     /* CubeMX の TIM3/TIM13/TIM14 の Period と同値 */
 #define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
 #define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
 
 static char g_tx_buf[256];
 
-/* Encoder1 のソフトカウント（PC9=A, PC8=B の EXTI 割り込みで更新） */
-static volatile int32_t s_enc1_count = 0;
-static volatile uint8_t s_enc1_prev  = 0;
 
 /* ============================================================
    Function Prototypes
    ============================================================ */
 static void MotorEncoderTest_Init(void);
-static void MX_TIM13_14_PWM_Init(void);
 static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
+static void Test_Lcd(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -85,8 +83,9 @@ void MotorEncoderTest_Run(void)
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
+                case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 5, 6, 7 or 8.");
+                    Serial_Println("[!] Invalid input. Enter 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -96,28 +95,26 @@ void MotorEncoderTest_Run(void)
 
 static void MotorEncoderTest_Init(void)
 {
-    MX_TIM13_14_PWM_Init();
-
     /* Encoder2 (PB6/PB7): CubeMX 生成の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc2_gpio = {0};
-    enc2_gpio.Pin       = ENC2_B_Pin | ENC2_A_Pin;
+    enc2_gpio.Pin       = ENC_2B_Pin | ENC_2A_Pin;
     enc2_gpio.Mode      = GPIO_MODE_AF_PP;
     enc2_gpio.Pull      = GPIO_PULLUP;
     enc2_gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
     enc2_gpio.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &enc2_gpio);
 
-    /* Encoder1 (PC8/PC9): CubeMX の設定は NOPULL なので、プルアップに再設定する（EXTI モードは維持） */
+    /* Encoder1 (PA8/PA9): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc1_gpio = {0};
-    enc1_gpio.Pin  = ENC1_B_Pin | ENC1_A_Pin;
-    enc1_gpio.Mode = GPIO_MODE_IT_RISING_FALLING;
-    enc1_gpio.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOC, &enc1_gpio);
-    s_enc1_prev = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
-                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
-    s_enc1_count = 0;
+    enc1_gpio.Pin       = ENC1_A_Pin | ENC1_B_Pin;
+    enc1_gpio.Mode      = GPIO_MODE_AF_PP;
+    enc1_gpio.Pull      = GPIO_PULLUP;
+    enc1_gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
+    enc1_gpio.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(GPIOA, &enc1_gpio);
 
-    /* Encoder2: TIM4（CubeMX 生成）, Motor2: TIM3（CubeMX 生成） */
+    /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM3（いずれも CubeMX 生成） */
+    HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);          /* Motor2 IN1 (PB4) */
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);          /* Motor2 IN2 (PB5) */
@@ -141,6 +138,7 @@ static void Print_Menu(void)
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
     Serial_Println(" 8 : Buzzer test (PA0)");
+    Serial_Println(" 9 : LCD test (color fill + color bands)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
 }
@@ -169,13 +167,13 @@ static void Test_Encoder_Monitor(void)
 
         /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Enc1 cnt=%7ld (PC9 A=%d PC8 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
                  (long)Encoder1_Get(),
                  (int)HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin),
                  (int)HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin),
                  (long)Encoder2_Get(),
-                 (int)HAL_GPIO_ReadPin(ENC2_A_GPIO_Port, ENC2_A_Pin),
-                 (int)HAL_GPIO_ReadPin(ENC2_B_GPIO_Port, ENC2_B_Pin));
+                 (int)HAL_GPIO_ReadPin(ENC_2A_GPIO_Port, ENC_2A_Pin),
+                 (int)HAL_GPIO_ReadPin(ENC_2B_GPIO_Port, ENC_2B_Pin));
         Serial_Print(g_tx_buf);
 
         HAL_Delay(50);
@@ -216,6 +214,17 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 9: LCD test（色の全画面塗り → 色の帯）
+   ============================================================ */
+static void Test_Lcd(void)
+{
+    Serial_Println("[TEST 9] LCD test");
+    Serial_Println("Fill: red, green, blue, white, black (0.5 s each), then 4 color bands.");
+    Lcd_Test();
+    Serial_Println("[TEST 9] Done. Expect bands from top: red, green, blue, yellow; a white square at top-left.");
 }
 
 /* ============================================================
@@ -287,7 +296,7 @@ static void Test_Motor2_Encoder2(void)
 {
     Serial_Println("\r\n[TEST 6] Motor2 + Encoder2 Test");
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Motor2 ramps 0->%d%%%% duty then holds. Encoder2 count is displayed.\r\n",
+             "Motor2 ramps 0->%d%% duty then holds. Encoder2 count is displayed.\r\n",
              ENCODER_TEST_DUTY);
     Serial_Print(g_tx_buf);
     Serial_Println("Press Enter to start, 'q' to stop...");
@@ -307,7 +316,7 @@ static void Test_Motor2_Encoder2(void)
         Serial_Print(g_tx_buf);
         HAL_Delay(300);
     }
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Hold at %d%%%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Hold at %d%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
     Serial_Print(g_tx_buf);
 
     int32_t prev_count = 0;
@@ -395,10 +404,10 @@ static void Motor2_Set(int16_t duty_percent)
    Encoder Functions（x4 resolution）
    ============================================================ */
 
-/* Encoder1: PC9=A, PC8=B のソフト4逓倍カウント */
+/* Encoder1: TIM1 エンコーダモード（16bit を符号拡張） */
 static int32_t Encoder1_Get(void)
 {
-    return s_enc1_count;
+    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim1);
 }
 
 /* Encoder2: TIM4 エンコーダモード（16bit を符号拡張） */
@@ -409,79 +418,10 @@ static int32_t Encoder2_Get(void)
 
 static void Encoder1_Reset(void)
 {
-    s_enc1_count = 0;
+    __HAL_TIM_SET_COUNTER(&htim1, 0);
 }
 
 static void Encoder2_Reset(void)
 {
     __HAL_TIM_SET_COUNTER(&htim4, 0);
-}
-
-/**
- * @brief Encoder1 の A/B いずれかのエッジで呼ばれ、グレイコードの遷移から +1/-1 を加える。
- *        状態 = (A<<1)|B。00->10->11->01->00 を正転(+1)とする。
- *        不正な遷移（取りこぼし）は 0 として無視する。
- */
-void MotorEncoderTest_EXTI_Callback(uint16_t gpio_pin)
-{
-    static const int8_t k_table[16] = {
-         0, -1, +1,  0,
-        +1,  0,  0, -1,
-        -1,  0,  0, +1,
-         0, +1, -1,  0
-    };
-
-    if (gpio_pin != ENC1_A_Pin && gpio_pin != ENC1_B_Pin) {
-        return;
-    }
-
-    uint8_t now = (uint8_t)(((HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin) == GPIO_PIN_SET) << 1)
-                          |  (HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin) == GPIO_PIN_SET));
-    s_enc1_count += k_table[(s_enc1_prev << 2) | now];
-    s_enc1_prev = now;
-}
-
-/* ============================================================
-   TIM13 / TIM14 PWM 初期化（Motor1）
-   PA6 = TIM13_CH1 (AF9) -> IN1, PA7 = TIM14_CH1 (AF9) -> IN2
-   Prescaler/Period は Motor2 (TIM3) と同じ 300Hz
-   ============================================================ */
-static void MX_TIM13_14_PWM_Init(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    TIM_OC_InitTypeDef sConfigOC = {0};
-
-    __HAL_RCC_TIM13_CLK_ENABLE();
-    __HAL_RCC_TIM14_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    GPIO_InitStruct.Pin       = MOTOR1_IN1_Pin;
-    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull      = GPIO_NOPULL;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF9_TIM13;
-    HAL_GPIO_Init(MOTOR1_IN1_GPIO_Port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin       = MOTOR1_IN2_Pin;
-    GPIO_InitStruct.Alternate = GPIO_AF9_TIM14;
-    HAL_GPIO_Init(MOTOR1_IN2_GPIO_Port, &GPIO_InitStruct);
-
-    htim13.Instance               = TIM13;
-    htim13.Init.Prescaler         = PWM_PRESCALER;
-    htim13.Init.CounterMode       = TIM_COUNTERMODE_UP;
-    htim13.Init.Period            = PWM_PERIOD;
-    htim13.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
-    htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-    if (HAL_TIM_PWM_Init(&htim13) != HAL_OK) Error_Handler();
-
-    htim14.Instance               = TIM14;
-    htim14.Init                   = htim13.Init;
-    if (HAL_TIM_PWM_Init(&htim14) != HAL_OK) Error_Handler();
-
-    sConfigOC.OCMode     = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse      = 0;
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-    if (HAL_TIM_PWM_ConfigChannel(&htim13, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
-    if (HAL_TIM_PWM_ConfigChannel(&htim14, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) Error_Handler();
 }
