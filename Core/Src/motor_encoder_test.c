@@ -56,6 +56,7 @@ static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
 static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms);
+static uint8_t Serial_WaitEnter(void);
 static void Motor1_Set(int16_t duty_percent);
 static void Motor2_Set(int16_t duty_percent);
 static int32_t Encoder1_Get(void);
@@ -199,10 +200,9 @@ static void Test_Buzzer(void)
 {
     Serial_Println("\r\n[TEST 8] Buzzer test (PA0)");
     Serial_Println("NOTE: PA0 is Motor2 IN1 on the TE-01 board. Motor2 will move there.");
-    Serial_Println("Press Enter to start...");
+    Serial_Println("Press Enter to start, 'q' to cancel...");
 
-    char c = 0;
-    Serial_ReceiveChar(&c, HAL_MAX_DELAY);
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
 
     /* 短く3回: 200ms ON / 200ms OFF */
     Serial_Println("  Short beep x3");
@@ -295,7 +295,7 @@ static void Test_Motor1_Encoder1(void)
     Serial_Println("Press Enter to start, 'q' to stop...");
 
     char c = 0;
-    Serial_ReceiveChar(&c, HAL_MAX_DELAY);
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
 
     Encoder1_Reset();
     Encoder2_Reset();
@@ -357,7 +357,7 @@ static void Test_Motor2_Encoder2(void)
     Serial_Println("Press Enter to start, 'q' to stop...");
 
     char c = 0;
-    Serial_ReceiveChar(&c, HAL_MAX_DELAY);
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
 
     Encoder2_Reset();
 
@@ -423,6 +423,18 @@ static void Serial_Println(const char *str)
 static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms)
 {
     return (HAL_UART_Receive(&huart2, (uint8_t *)c, 1, timeout_ms) == HAL_OK) ? 1U : 0U;
+}
+
+/* 開始待ち: Enter（CR または LF）で 1、'q' / 'Q' で 0 を返す。それ以外の入力は無視して待ち続ける */
+static uint8_t Serial_WaitEnter(void)
+{
+    char c = 0;
+    while (1)
+    {
+        if (!Serial_ReceiveChar(&c, HAL_MAX_DELAY)) continue;
+        if (c == 13 || c == 10) return 1U;
+        if (c == 'q' || c == 'Q') return 0U;
+    }
 }
 
 /* ============================================================
