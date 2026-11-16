@@ -98,6 +98,10 @@ void MotorEncoderTest_Run(void)
 
 static void MotorEncoderTest_Init(void)
 {
+    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA8/PA9) と Encoder2 (PB6/PB7) のプルアップは、
+     *   CubeMX の .ioc に反映できなかった（生成コードが GPIO_NOPULL のまま）ため、ここで手書きで再設定している。
+     *   この初期化を通らない本番コードではピンが浮く。.ioc で Pull-up にできたら、この再設定を削除すること。 */
+
     /* Encoder2 (PB6/PB7): CubeMX 生成の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc2_gpio = {0};
     enc2_gpio.Pin       = ENC_2B_Pin | ENC_2A_Pin;
