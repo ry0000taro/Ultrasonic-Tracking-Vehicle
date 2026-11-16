@@ -34,8 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 1 にするとモータ+エンコーダ動作確認メニューに入る（Issue #18）。0 なら従来の超音波デモ */
-#define MOTOR_ENCODER_TEST_MODE 1
 
 /* USER CODE END PD */
 
@@ -47,9 +45,12 @@
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi2;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim13;
+TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart2;
 
@@ -62,9 +63,12 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM3_Init(void);
-static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM13_Init(void);
+static void MX_TIM14_Init(void);
+static void MX_TIM4_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -105,42 +109,15 @@ int main(void)
   MX_GPIO_Init();
   MX_SPI2_Init();
   MX_TIM3_Init();
-  MX_TIM4_Init();
   MX_TIM5_Init();
   MX_USART2_UART_Init();
+  MX_TIM13_Init();
+  MX_TIM14_Init();
+  MX_TIM4_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-#if MOTOR_ENCODER_TEST_MODE
-  /* エンコーダ確認: ブザーのコードより前に入る。
-   * PA0(BUZZER) は TE-01 基板ではモータ2(IN1)なので、ブザー鳴動コードを通すとアームが3回動く */
-  MotorEncoderTest_Run();   /* 戻らない */
-#endif
-
-  /* TEMP-BUZZER-TEST: ブザー鳴動確認用の一時コード（確認後に削除する） */
-  for (int i = 0; i < 3; i++) {
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_SET);   /* ON  */
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET); /* OFF */
-    HAL_Delay(500);
-  }
-  /* TEMP-BUZZER-TEST ここまで */
-
-  /* 超音波センサの準備: TIM5 を 1us ストップウォッチとして動かし始める */
-  Ultrasonic_Init();
-  /* 超音波センサの接続確認（センサを1個ずつ鳴らして応答を見る）。
-   *   us_ok_mask の bit i = 1 ならセンサ i が応答あり（0x0F なら4個とも正常）。
-   *   us_check は 0:全部正常 / -1:応答なしのセンサあり。
-   *   結果はデバッガの Variables / Live Expressions で確認する。 */
-  uint8_t us_ok_mask = 0U;
-  int us_check = Ultrasonic_CheckConnection(&us_ok_mask);
-
-  /* Tera Term に接続確認の結果を表示する（115200bps, 8N1）。
-   * 距離は float のまま printf せず整数[mm]で表示する
-   * （%f は newlib-nano の設定を変えないと使えないため）。 */
-  printf("\r\n=== Ultrasonic connection check ===\r\n");
-  for (int i = 0; i < US_SENSOR_NUM; i++) {
-    printf("sensor%d: %s\r\n", i, (us_ok_mask & (1U << i)) ? "OK" : "NG (no response)");
-  }
-  printf("result=%d ok_mask=0x%02X\r\n", us_check, us_ok_mask);
+  /* 動作確認メニュー（USART2 115200bps）。3: 超音波の本処理、5〜9: モータ・エンコーダ・ブザー・液晶の確認。戻らない */
+  MotorEncoderTest_Run();
 
   /* USER CODE END 2 */
 
@@ -151,24 +128,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* 60ms ごとに組を交互に鳴らし、距離を表示する（接続確認後の動作確認用） */
-    static int pair_id = 0;
-    float dist[US_SENSOR_NUM];
-    int   no_resp[US_SENSOR_NUM];
-
-    Ultrasonic_Trigger(pair_id);
-    pair_id = (pair_id + 1) % US_PAIR_NUM;
-    HAL_Delay(60);
-    Ultrasonic_GetResult(dist, no_resp);
-
-    for (int i = 0; i < US_SENSOR_NUM; i++) {
-      if (no_resp[i]) {
-        printf("   -  ");
-      } else {
-        printf("%4d  ", (int)dist[i]);
-      }
-    }
-    printf("\r\n");
   }
   /* USER CODE END 3 */
 }
@@ -254,6 +213,56 @@ static void MX_SPI2_Init(void)
   /* USER CODE BEGIN SPI2_Init 2 */
 
   /* USER CODE END SPI2_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
 
 }
 
@@ -405,6 +414,98 @@ static void MX_TIM5_Init(void)
 }
 
 /**
+  * @brief TIM13 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM13_Init(void)
+{
+
+  /* USER CODE BEGIN TIM13_Init 0 */
+
+  /* USER CODE END TIM13_Init 0 */
+
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM13_Init 1 */
+
+  /* USER CODE END TIM13_Init 1 */
+  htim13.Instance = TIM13;
+  htim13.Init.Prescaler = 4;
+  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim13.Init.Period = 55999;
+  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim13) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim13, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM13_Init 2 */
+
+  /* USER CODE END TIM13_Init 2 */
+  HAL_TIM_MspPostInit(&htim13);
+
+}
+
+/**
+  * @brief TIM14 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM14_Init(void)
+{
+
+  /* USER CODE BEGIN TIM14_Init 0 */
+
+  /* USER CODE END TIM14_Init 0 */
+
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM14_Init 1 */
+
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 4;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 55999;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim14, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM14_Init 2 */
+
+  /* USER CODE END TIM14_Init 2 */
+  HAL_TIM_MspPostInit(&htim14);
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -456,10 +557,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, BUZZER_Pin|LCD_RESET_Pin|LCD_DC_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, US4_TRIG_Pin|US1_TRIG_Pin|US2_TRIG_Pin|US3_TRIG_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, LCD_DC_Pin|LCD_RESET_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LCD_CS_GPIO_Port, LCD_CS_Pin, GPIO_PIN_SET);
@@ -470,36 +574,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(START_STOP_S3_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : US1_ECHO_Pin US2_ECHO_Pin US3_ECHO_Pin US4_ECHO_Pin
-                           ENC1_B_Pin ENC1_A_Pin */
-  GPIO_InitStruct.Pin = US1_ECHO_Pin|US2_ECHO_Pin|US3_ECHO_Pin|US4_ECHO_Pin
-                          |ENC1_B_Pin|ENC1_A_Pin;
+  /*Configure GPIO pins : US1_ECHO_Pin US2_ECHO_Pin US3_ECHO_Pin US4_ECHO_Pin */
+  GPIO_InitStruct.Pin = US1_ECHO_Pin|US2_ECHO_Pin|US3_ECHO_Pin|US4_ECHO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : BUZZER_Pin LCD_RESET_Pin LCD_DC_Pin */
-  GPIO_InitStruct.Pin = BUZZER_Pin|LCD_RESET_Pin|LCD_DC_Pin;
+  /*Configure GPIO pin : BUZZER_Pin */
+  GPIO_InitStruct.Pin = BUZZER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : MOTOR1_IN1_Pin */
-  GPIO_InitStruct.Pin = MOTOR1_IN1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF9_TIM13;
-  HAL_GPIO_Init(MOTOR1_IN1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : MOTOR1_IN2_Pin */
-  GPIO_InitStruct.Pin = MOTOR1_IN2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF9_TIM14;
-  HAL_GPIO_Init(MOTOR1_IN2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(BUZZER_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : US4_TRIG_Pin US1_TRIG_Pin US2_TRIG_Pin US3_TRIG_Pin */
   GPIO_InitStruct.Pin = US4_TRIG_Pin|US1_TRIG_Pin|US2_TRIG_Pin|US3_TRIG_Pin;
@@ -508,12 +594,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LCD_CS_Pin */
-  GPIO_InitStruct.Pin = LCD_CS_Pin;
+  /*Configure GPIO pins : LCD_DC_Pin LCD_CS_Pin LCD_RESET_Pin */
+  GPIO_InitStruct.Pin = LCD_DC_Pin|LCD_CS_Pin|LCD_RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LCD_CS_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
@@ -527,9 +613,6 @@ static void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI3_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(EXTI3_IRQn);
-
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 2, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -548,12 +631,10 @@ int __io_putchar(int ch)
 }
 
 /* EXTI（外部ピン割り込み）が起きるたびに HAL から呼ばれる関数。
- * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。
- * エンコーダ1（PC8/PC9）の処理を足すときは、ここで GPIO_Pin を見て振り分ける。 */
+ * Echo ピン（PC0〜PC3）の変化を超音波ドライバに渡す。 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   Ultrasonic_EXTI_Callback(GPIO_Pin);
-  MotorEncoderTest_EXTI_Callback(GPIO_Pin);
 }
 
 /* USER CODE END 4 */

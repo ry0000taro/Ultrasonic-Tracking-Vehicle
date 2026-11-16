@@ -3,8 +3,8 @@
   * @file    lcd.h
   * @brief   液晶 MSP2807（2.8インチ 240x320 SPI）の簡易ドライバ（Issue #18）
   *
-  * 配線（電気系設計の回路図で確認、2026-11-13）:
-  *   CS=PB12(GPIO)  RESET=PA8(GPIO)  DC/RS=PA9(GPIO)
+  * 配線（ピン確定 2026-11-16。docs/pin_assignment.md v0.3）:
+  *   CS=PB12(GPIO)  RESET=PB14(GPIO)  DC/RS=PB10(GPIO)
   *   SCK=PB13(SPI2_SCK)  SDI=PB15(SPI2_MOSI)  ※液晶は受信のみ（MISO 不要）
   *
   * 駆動ICは ILI9341 を仮定している（MSP2807 は一般に ILI9341。ドキュメント上は未確認）。
@@ -25,8 +25,7 @@
 #define LCD_BLACK   0x0000U
 #define LCD_WHITE   0xFFFFU
 
-/* PA8/PA9/PB12 を GPIO 出力にして、液晶を初期化する。
- * 注意: PA8/PA9 を GPIO に戻すため、TE-01 テスト用の Encoder1(TIM1, PA8/PA9) はリセットまで動かなくなる。 */
+/* 液晶をハードウェアリセットして初期化する。CS/RESET/DC の GPIO 出力は CubeMX が設定済み。 */
 void Lcd_Init(void);
 
 /* 画面全体を1色で塗りつぶす */

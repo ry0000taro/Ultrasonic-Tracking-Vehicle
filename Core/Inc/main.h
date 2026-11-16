@@ -85,22 +85,20 @@ void Error_Handler(void);
 #define MOTOR1_IN2_GPIO_Port GPIOA
 #define US4_TRIG_Pin GPIO_PIN_4
 #define US4_TRIG_GPIO_Port GPIOC
+#define LCD_DC_Pin GPIO_PIN_10
+#define LCD_DC_GPIO_Port GPIOB
 #define LCD_CS_Pin GPIO_PIN_12
 #define LCD_CS_GPIO_Port GPIOB
 #define LCD_SCK_Pin GPIO_PIN_13
 #define LCD_SCK_GPIO_Port GPIOB
+#define LCD_RESET_Pin GPIO_PIN_14
+#define LCD_RESET_GPIO_Port GPIOB
 #define LCD_SDI_Pin GPIO_PIN_15
 #define LCD_SDI_GPIO_Port GPIOB
-#define ENC1_B_Pin GPIO_PIN_8
-#define ENC1_B_GPIO_Port GPIOC
-#define ENC1_B_EXTI_IRQn EXTI9_5_IRQn
-#define ENC1_A_Pin GPIO_PIN_9
-#define ENC1_A_GPIO_Port GPIOC
-#define ENC1_A_EXTI_IRQn EXTI9_5_IRQn
-#define LCD_RESET_Pin GPIO_PIN_8
-#define LCD_RESET_GPIO_Port GPIOA
-#define LCD_DC_Pin GPIO_PIN_9
-#define LCD_DC_GPIO_Port GPIOA
+#define ENC1_A_Pin GPIO_PIN_8
+#define ENC1_A_GPIO_Port GPIOA
+#define ENC1_B_Pin GPIO_PIN_9
+#define ENC1_B_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
@@ -115,10 +113,10 @@ void Error_Handler(void);
 #define MOTOR2_IN1_GPIO_Port GPIOB
 #define MOTOR2_IN2_Pin GPIO_PIN_5
 #define MOTOR2_IN2_GPIO_Port GPIOB
-#define ENC2_B_Pin GPIO_PIN_6
-#define ENC2_B_GPIO_Port GPIOB
-#define ENC2_A_Pin GPIO_PIN_7
-#define ENC2_A_GPIO_Port GPIOB
+#define ENC_2B_Pin GPIO_PIN_6
+#define ENC_2B_GPIO_Port GPIOB
+#define ENC_2A_Pin GPIO_PIN_7
+#define ENC_2A_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -9,6 +9,10 @@
 
 extern SPI_HandleTypeDef hspi2;   /* main.c で CubeMX が生成 */
 
+/* TODO(#18 レビュー指摘・見送り。Issue #28): 動作確認用の最小実装。本番の表示処理（LCD-05/06）を作るときに直すこと。
+ *   - HAL_SPI_Transmit の戻り値を見ていない。送信エラーでも CS を戻して続行するため、
+ *     初期化が途中で失敗しても気づけない。戻り値を確認し、失敗を上位に返す。
+ *   - 全画面の塗りつぶしは 1 行ずつ送るブロッキング処理でメインループを止める。DMA を使うか、変化した所だけ描く。 */
 #define LCD_SPI_TIMEOUT  100U
 
 /* ILI9341 のコマンド */
@@ -64,22 +68,10 @@ static void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 /* ---- 公開 API ---- */
 void Lcd_Init(void)
 {
-  GPIO_InitTypeDef g = {0};
-
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /* RESET(PA8) / DC(PA9) / CS(PB12) を GPIO 出力にする（テスト用の TIM1 設定を上書きする） */
+  /* CS(PB12) / DC(PB10) / RESET(PB14) は CubeMX が GPIO 出力に設定済み。初期レベルだけ決める */
   lcd_cs(1);
   lcd_dc(0);
   lcd_reset(1);
-  g.Mode  = GPIO_MODE_OUTPUT_PP;
-  g.Pull  = GPIO_NOPULL;
-  g.Speed = GPIO_SPEED_FREQ_HIGH;
-  g.Pin = LCD_RESET_Pin | LCD_DC_Pin;
-  HAL_GPIO_Init(GPIOA, &g);
-  g.Pin = LCD_CS_Pin;
-  HAL_GPIO_Init(LCD_CS_GPIO_Port, &g);
 
   /* ハードウェアリセット */
   lcd_reset(0);
