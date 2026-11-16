@@ -471,24 +471,39 @@ static void Motor2_Set(int16_t duty_percent)
    Encoder Functions（x4 resolution）
    ============================================================ */
 
-/* Encoder1: TIM1 エンコーダモード（16bit を符号拡張） */
-static int32_t Encoder1_Get(void)
+/* 16bit タイマのカウンタは 65535 の次に 0 へ戻る（一周する）。
+ * そのまま使うと、境界をまたいだ瞬間に値と差分が大きく飛ぶ。
+ * そこで「前回の読み値との差」を一周を考慮して求め、32bit の累積カウントに足していく。
+ * 前提: 読み出しの間隔で進むカウントが 32768 未満であること（テストでは 50ms ごとに読むので十分）。 */
+typedef struct
 {
-    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim1);
+    TIM_HandleTypeDef *htim;
+    uint16_t last;      /* 前回読んだカウンタ値 */
+    int32_t  total;     /* 累積カウント */
+} EncoderCount;
+
+static EncoderCount s_enc1 = { &htim1, 0U, 0 };
+static EncoderCount s_enc2 = { &htim4, 0U, 0 };
+
+static int32_t Encoder_Get(EncoderCount *e)
+{
+    uint16_t now = (uint16_t)__HAL_TIM_GET_COUNTER(e->htim);
+    e->total += (int16_t)(uint16_t)(now - e->last);     /* 16bit の引き算で一周を吸収し、符号付きにする */
+    e->last   = now;
+    return e->total;
 }
 
-/* Encoder2: TIM4 エンコーダモード（16bit を符号拡張） */
-static int32_t Encoder2_Get(void)
+static void Encoder_Reset(EncoderCount *e)
 {
-    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(&htim4);
+    __HAL_TIM_SET_COUNTER(e->htim, 0);
+    e->last  = 0U;
+    e->total = 0;
 }
 
-static void Encoder1_Reset(void)
-{
-    __HAL_TIM_SET_COUNTER(&htim1, 0);
-}
+/* Encoder1: TIM1 エンコーダモード */
+static int32_t Encoder1_Get(void)   { return Encoder_Get(&s_enc1); }
+static void    Encoder1_Reset(void) { Encoder_Reset(&s_enc1); }
 
-static void Encoder2_Reset(void)
-{
-    __HAL_TIM_SET_COUNTER(&htim4, 0);
-}
+/* Encoder2: TIM4 エンコーダモード */
+static int32_t Encoder2_Get(void)   { return Encoder_Get(&s_enc2); }
+static void    Encoder2_Reset(void) { Encoder_Reset(&s_enc2); }
