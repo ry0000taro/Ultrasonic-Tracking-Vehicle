@@ -17,7 +17,7 @@
   ******************************************************************************
   */
 #include "motor_encoder_test.h"
-#include "lcd_ili9341.h"
+#include "lcd.h"
 #include "ultrasonic.h"
 #include <stdio.h>
 #include <string.h>
@@ -147,7 +147,7 @@ static void Print_Menu(void)
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
     Serial_Println(" 8 : Buzzer test (PA0)");
-    Serial_Println(" 9 : LCD test (color fill + color bands)");
+    Serial_Println(" 9 : LCD test (color fill, then STOP / FOLLOW / ERROR)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
 }
@@ -272,14 +272,37 @@ static void Test_Ultrasonic(void)
 }
 
 /* ============================================================
-   Test 9: LCD test（色の全画面塗り → 色の帯）
+   Test 9: LCD test（MSP2807。CS=PB12, RESET=PB14, DC/RS=PB10, SCK=PB13, SDI=PB15）
+   単色(赤→緑→青)のあと、状態表示(停止中 → 追従中 → エラー)を順に表示する。
    ============================================================ */
 static void Test_Lcd(void)
 {
-    Serial_Println("[TEST 9] LCD test");
-    Serial_Println("Fill: red, green, blue, white, black (0.5 s each), then 4 color bands.");
-    Lcd_Test();
-    Serial_Println("[TEST 9] Done. Expect bands from top: red, green, blue, yellow; a white square at top-left.");
+    Serial_Println("\r\n[TEST 9] LCD test (MSP2807, ILI9341 assumed)");
+    Serial_Println("Press Enter to start, 'q' to cancel...");
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
+
+    Lcd_Init();
+
+    /* 単色 赤→緑→青 を順に表示（表示されるか、色が合っているかの確認） */
+    Serial_Println("  Fill: red -> green -> blue");
+    Lcd_FillScreen(LCD_RGB(255, 0, 0));
+    HAL_Delay(600);
+    Lcd_FillScreen(LCD_RGB(0, 255, 0));
+    HAL_Delay(600);
+    Lcd_FillScreen(LCD_RGB(0, 0, 255));
+    HAL_Delay(600);
+
+    /* 状態表示: 停止中 → 追従中 → エラー（各2秒） */
+    Serial_Println("  State: STOP (red / square)");
+    Lcd_DrawState(LCD_STATE_STOP);
+    HAL_Delay(2000);
+    Serial_Println("  State: FOLLOW (green / triangle)");
+    Lcd_DrawState(LCD_STATE_FOLLOW);
+    HAL_Delay(2000);
+    Serial_Println("  State: ERROR (yellow / warning)");
+    Lcd_DrawState(LCD_STATE_ERROR);
+
+    Serial_Println("[TEST 9] Done. Check: R,G,B fills, then STOP(red), FOLLOW(green), ERROR(yellow). Last one stays.");
 }
 
 /* ============================================================
