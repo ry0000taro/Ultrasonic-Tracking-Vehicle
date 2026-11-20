@@ -3,8 +3,8 @@
   * @file    lcd.h
   * @brief   液晶 MSP2807（2.8インチ 240x320 SPI）の簡易ドライバ（Issue #18）
   *
-  * 配線（ピン確定 2026-11-16。docs/pin_assignment.md v0.3）:
-  *   CS=PB12(GPIO)  RESET=PB14(GPIO)  DC/RS=PB10(GPIO)
+  * 配線（ピン確定 2026-11-20。docs/pin_assignment.md v0.4）:
+  *   CS=PB12(GPIO)  RESET=PA10(GPIO)  DC/RS=PB14(GPIO)
   *   SCK=PB13(SPI2_SCK)  SDI=PB15(SPI2_MOSI)  ※液晶は受信のみ（MISO 不要）
   *
   * 駆動ICは ILI9341 を仮定している（MSP2807 は一般に ILI9341。ドキュメント上は未確認）。

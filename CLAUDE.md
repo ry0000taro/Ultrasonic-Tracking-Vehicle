@@ -78,9 +78,9 @@ CubeMXで `.ioc` を編集したときは、CubeIDE で "Generate Code" する�
 
 ### ピン配置の要点(`Core/Inc/main.h` の `*_Pin` 定義が正)
 
-モータ1(PA6/PA7)はTIM3との競合を避けるためTIM13/TIM14へ逃がしている、エンコーダ1はPA8/PA9(TIM1の
-ハードウェアエンコーダ。2026-11-16 に PC8/PC9 のEXTIソフト4逓倍から変更し、液晶 RESET/DC は PB14/PB10 へ移した)、
-など複数のピン競合の回避策が
+モータ1(PA6/PA7)はTIM13/TIM14、モータ2はPA1/PA0(TIM2)、エンコーダ1はPA9/PA8(TIM1のハードウェア
+エンコーダ)、液晶 RESET/DC は PA10/PB14、ブザーは PB10(2026-11-20 に回路図から変更。変更表は
+`docs/pin_assignment.md` の 0 章)、など複数のピン競合の回避策が
 `docs/pin_assignment.md` の「4. 設計上の問題点と対処」に説明されている。新しいペリフェラルを
 .iocに追加する前にこのセクションを読むこと。
 
