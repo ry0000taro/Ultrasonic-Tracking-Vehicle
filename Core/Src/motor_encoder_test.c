@@ -18,6 +18,7 @@
   */
 #include "motor_encoder_test.h"
 #include "lcd.h"
+#include "emergency_stop.h"
 #include "ultrasonic.h"
 #include <stdio.h>
 #include <string.h>
@@ -38,6 +39,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
 #define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
+#define ESTOP_TEST_DUTY    20       /* Duty cycle for the emergency stop test [%] */
 
 static char g_tx_buf[256];
 
@@ -53,6 +55,7 @@ static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
 static void Test_Lcd(void);
 static void Test_Ultrasonic(void);
+static void Test_EmergencyStop(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -83,6 +86,7 @@ void MotorEncoderTest_Run(void)
 
             switch (cmd)
             {
+                case '2': Test_EmergencyStop();     break;
                 case '3': Test_Ultrasonic();        break;
                 case '4': Test_Motors_Encoders();   break;
                 case '5': Test_Motor1_Encoder1();   break;
@@ -91,7 +95,7 @@ void MotorEncoderTest_Run(void)
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 3, 4, 5, 6, 7, 8 or 9.");
+                    Serial_Println("[!] Invalid input. Enter 2, 3, 4, 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -144,6 +148,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
+    Serial_Println(" 2 : Emergency stop (both motors run; press the stop button)");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
@@ -223,6 +228,102 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 2: 緊急停止のテスト（Motor1 と Motor2 を同時に回して、緊急停止ボタンで止める）
+   緊急停止ボタン = モータ電源の押しボタン（ノーマルクローズ形・自己保持しない）。押している間だけ 12V が切れ、離すと戻る。
+   PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。
+   ボタンを押すと 12V が切れてモータが止まる。同時に EmergencyStop（SysTick の 10ms 周期の読み取り）が
+   PWM の出力を 0 にしてラッチするので、ボタンを離して 12V が戻ってもモータは勝手に回らない。'r' で解除して再開する。
+   このテストの間だけ緊急停止を有効にする（テスト 4/5/6 には組み込まない）。
+   ============================================================ */
+static void Test_EmergencyStop(void)
+{
+    Serial_Println("\r\n[TEST 2] Emergency stop (push button cuts the motor 12V; sensed on PB1: HIGH = power ON, LOW = OFF)");
+    snprintf(g_tx_buf, sizeof(g_tx_buf),
+             "Motor1 and Motor2 ramp up to %d%% duty and keep running. Press the emergency stop button to stop.\r\n",
+             ESTOP_TEST_DUTY);
+    Serial_Print(g_tx_buf);
+    Serial_Println("After the stop, releasing the button (12V returns) must NOT restart the motors. 'r' = clear and restart, 'q' = quit.");
+    Serial_Println("Do not press the button (motor power ON). Press Enter to start, 'q' to cancel...");
+
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
+
+    Motor1_Set(0);
+    Motor2_Set(0);
+    EmergencyStop_Clear();
+    EmergencyStop_Enable(1U);       /* このテストの間だけ、緊急停止（モータ出力の 0 化とラッチ）を有効にする */
+
+    uint8_t  prev    = EmergencyStop_PowerOn();
+    uint32_t t_print = HAL_GetTick();
+    uint32_t t_step  = HAL_GetTick();
+    int      d       = 0;               /* 今のデューティ[%] */
+
+    while (1)
+    {
+        char c = 0;
+        if (Serial_ReceiveChar(&c, 5))
+        {
+            if (c == 'q' || c == 'Q') break;
+            if (c == 'r' || c == 'R')
+            {
+                if (EmergencyStop_PowerOn())
+                {
+                    EmergencyStop_Clear();
+                    d = 0;
+                    t_step = HAL_GetTick();
+                    Serial_Print("\r  latch cleared. restarting\r\n");
+                }
+                else
+                {
+                    Serial_Print("\r  release the emergency stop button first\r\n");
+                }
+            }
+        }
+
+        uint8_t now = EmergencyStop_PowerOn();
+        if (now != prev)
+        {
+            prev = now;
+            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  %s                                              \r\n",
+                     now ? ">>> button released (motor power ON)" : "<<< button pressed (motor power OFF = emergency stop)");
+            Serial_Print(g_tx_buf);
+        }
+
+        /* モータの駆動: 電源 ON で、ラッチされていないときだけ、300ms ごとに 5% ずつ ESTOP_TEST_DUTY まで上げる */
+        if (now && !EmergencyStop_IsActive())
+        {
+            if (d < ESTOP_TEST_DUTY && HAL_GetTick() - t_step >= 300U)
+            {
+                t_step = HAL_GetTick();
+                d += 5;
+            }
+            Motor1_Set((int16_t)d);
+            Motor2_Set((int16_t)d);
+        }
+
+        if (HAL_GetTick() - t_print >= 100U)
+        {
+            t_print = HAL_GetTick();
+            snprintf(g_tx_buf, sizeof(g_tx_buf),
+                     "\r  raw = %d  power = %-3s  motors = %-8s  duty = %2d%%  OFF count = %lu  latched = %d   ",
+                     (int)HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin), now ? "ON" : "OFF",
+                     EmergencyStop_IsActive() ? "STOPPED" : (now && d > 0 ? "RUNNING" : "IDLE"),
+                     EmergencyStop_IsActive() ? 0 : d,
+                     (unsigned long)EmergencyStop_OffCount(), (int)EmergencyStop_IsActive());
+            Serial_Print(g_tx_buf);
+        }
+    }
+
+    Motor1_Set(0);
+    Motor2_Set(0);
+    EmergencyStop_Enable(0U);       /* 無効に戻し、ラッチも解除する（4/5/6 のテストには影響させない） */
+    EmergencyStop_Clear();
+
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  OFF count = %lu\r\n", (unsigned long)EmergencyStop_OffCount());
+    Serial_Print(g_tx_buf);
+    Serial_Println("[TEST 2] Done. Check: button pressed -> motors stop, STOPPED and latched = 1; released -> motors stay stopped until 'r'.");
 }
 
 /* ============================================================
