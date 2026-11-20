@@ -113,7 +113,7 @@
 | PWR-06 | NucleoのE5V給電とST-LINKのUSB接続の併用可否を確認する（デバッグのUSART2はST-LINK経由） | 全体構想図 | 要確認 |
 | PWR-07 | エンコーダ電源の記述を統一する（全体構想図はDC-DC、ピン割り当ては専用レギュレータ RE_5V） | 資料間の不一致 | 要確認 |
 | PWR-08 | GNDは共通にして1点接地 | 全体構想図 | 確定 |
-| PWR-09 | 緊急停止（D-15）の実装。`Core/Src/emergency_stop.c`。PB1 は EXTI1 を Echo（PC1）が使っているため割り込みにできず、SysTick の 1ms から 10ms 周期で読み、2回連続で同じなら確定する（約 20ms、INP-01 と同じ）。OFF と確定したらモータの PWM（TIM13/TIM14/TIM2）の出力を 0 にして、`EmergencyStop_Clear()` が呼ばれるまで保持する。起動時は無効で、起動時の OFF は停止として数えない。再開（OFF→ON でクリア）は、状態管理（INP-01、SOFT）で `EmergencyStop_PowerOn()` を見て行う。確認はテストメニュー 2 | D-15、INP-01 | 実装済み（実機確認は未） |
+| PWR-09 | 緊急停止（D-15）の実装。`Core/Src/emergency_stop.c`。PB1 は EXTI1 を Echo（PC1）が使っているため割り込みにできず、SysTick の 1ms から 10ms 周期で読み、2回連続で同じなら確定する（約 20ms、INP-01 と同じ）。OFF と確定したらモータの PWM（TIM13/TIM14/TIM2）の出力を 0 にして、`EmergencyStop_Clear()` が呼ばれるまで保持する。起動時は無効で、起動時の OFF は停止として数えない。再開（OFF→ON でクリア）は、状態管理（INP-01、SOFT）で `EmergencyStop_PowerOn()` を見て行う。確認はテストメニュー 2（Motor1 と Motor2 を 20% で同時に回し、モータ電源 OFF で止まること、ON に戻しても再開しないこと、`r` で解除して再開できることを見る）。テスト 4/5/6 には組み込まない | D-15、INP-01 | 実装済み（実機確認は未） |
 
 ### LCD 表示器（液晶 ILI9341）
 

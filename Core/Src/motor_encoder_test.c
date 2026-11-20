@@ -39,6 +39,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
 #define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
+#define ESTOP_TEST_DUTY    20       /* Duty cycle for the emergency stop test [%] */
 
 static char g_tx_buf[256];
 
@@ -147,7 +148,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
-    Serial_Println(" 2 : Emergency stop (motor power switch, PB1)");
+    Serial_Println(" 2 : Emergency stop (both motors run; motor power OFF stops them)");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
@@ -230,22 +231,33 @@ static void Test_Buzzer(void)
 }
 
 /* ============================================================
-   Test 2: 緊急停止の単体テスト（モータは動かさない）
+   Test 2: 緊急停止のテスト（Motor1 と Motor2 を同時に回して、モータ電源のスイッチで止める）
    緊急停止 = モータ電源の自己保持形スイッチ。PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。
-   スイッチを押して電源を OFF にすると、EmergencyStop（SysTick の 10ms 周期の読み取り）が検出してラッチする。
+   スイッチを OFF にすると 12V が切れてモータが止まる。同時に EmergencyStop（SysTick の 10ms 周期の読み取り）が
+   PWM の出力を 0 にしてラッチするので、スイッチを ON に戻してもモータは勝手に回らない。'r' で解除して再開する。
+   このテストの間だけ緊急停止を有効にする（テスト 4/5/6 には組み込まない）。
    ============================================================ */
 static void Test_EmergencyStop(void)
 {
     Serial_Println("\r\n[TEST 2] Emergency stop (motor power switch, sensed on PB1: HIGH = ON, LOW = OFF)");
-    Serial_Println("Turn the motor power switch OFF and ON. 'q' to stop, 'r' to clear the latch and the count.");
-    Serial_Println("raw: PB1 level.  power: after 2 samples (about 20 ms).  latched: stays 1 after OFF until 'r'.");
+    snprintf(g_tx_buf, sizeof(g_tx_buf),
+             "Motor1 and Motor2 ramp up to %d%% duty and keep running. Turn the motor power switch OFF to stop.\r\n",
+             ESTOP_TEST_DUTY);
+    Serial_Print(g_tx_buf);
+    Serial_Println("After the stop, turning the switch ON again must NOT restart the motors. 'r' = clear and restart, 'q' = quit.");
+    Serial_Println("Turn the motor power switch ON first. Press Enter to start, 'q' to cancel...");
 
-    Motor1_Set(0);      /* 念のためモータは止めておく */
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
+
+    Motor1_Set(0);
     Motor2_Set(0);
-
+    EmergencyStop_Clear();
     EmergencyStop_Enable(1U);       /* このテストの間だけ、緊急停止（モータ出力の 0 化とラッチ）を有効にする */
+
     uint8_t  prev    = EmergencyStop_PowerOn();
     uint32_t t_print = HAL_GetTick();
+    uint32_t t_step  = HAL_GetTick();
+    int      d       = 0;               /* 今のデューティ[%] */
 
     while (1)
     {
@@ -253,7 +265,20 @@ static void Test_EmergencyStop(void)
         if (Serial_ReceiveChar(&c, 5))
         {
             if (c == 'q' || c == 'Q') break;
-            if (c == 'r' || c == 'R') EmergencyStop_Clear();
+            if (c == 'r' || c == 'R')
+            {
+                if (EmergencyStop_PowerOn())
+                {
+                    EmergencyStop_Clear();
+                    d = 0;
+                    t_step = HAL_GetTick();
+                    Serial_Print("\r  latch cleared. restarting\r\n");
+                }
+                else
+                {
+                    Serial_Print("\r  turn the motor power switch ON first\r\n");
+                }
+            }
         }
 
         uint8_t now = EmergencyStop_PowerOn();
@@ -265,22 +290,39 @@ static void Test_EmergencyStop(void)
             Serial_Print(g_tx_buf);
         }
 
+        /* モータの駆動: 電源 ON で、ラッチされていないときだけ、300ms ごとに 5% ずつ ESTOP_TEST_DUTY まで上げる */
+        if (now && !EmergencyStop_IsActive())
+        {
+            if (d < ESTOP_TEST_DUTY && HAL_GetTick() - t_step >= 300U)
+            {
+                t_step = HAL_GetTick();
+                d += 5;
+            }
+            Motor1_Set((int16_t)d);
+            Motor2_Set((int16_t)d);
+        }
+
         if (HAL_GetTick() - t_print >= 100U)
         {
             t_print = HAL_GetTick();
-            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  raw = %d   power = %-3s   OFF count = %lu   latched = %d   ",
-                     (int)HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin),
-                     now ? "ON" : "OFF", (unsigned long)EmergencyStop_OffCount(), (int)EmergencyStop_IsActive());
+            snprintf(g_tx_buf, sizeof(g_tx_buf),
+                     "\r  raw = %d  power = %-3s  motors = %-8s  duty = %2d%%  OFF count = %lu  latched = %d   ",
+                     (int)HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin), now ? "ON" : "OFF",
+                     EmergencyStop_IsActive() ? "STOPPED" : (now && d > 0 ? "RUNNING" : "IDLE"),
+                     EmergencyStop_IsActive() ? 0 : d,
+                     (unsigned long)EmergencyStop_OffCount(), (int)EmergencyStop_IsActive());
             Serial_Print(g_tx_buf);
         }
     }
 
+    Motor1_Set(0);
+    Motor2_Set(0);
     EmergencyStop_Enable(0U);       /* 無効に戻し、ラッチも解除する（4/5/6 のテストには影響させない） */
     EmergencyStop_Clear();
 
     snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  OFF count = %lu\r\n", (unsigned long)EmergencyStop_OffCount());
     Serial_Print(g_tx_buf);
-    Serial_Println("[TEST 2] Done. Check: switch OFF -> power OFF and latched = 1, switch ON -> power ON, latched stays 1 until 'r'.");
+    Serial_Println("[TEST 2] Done. Check: switch OFF -> motors stop, STOPPED and latched = 1; switch ON -> motors stay stopped until 'r'.");
 }
 
 /* ============================================================
