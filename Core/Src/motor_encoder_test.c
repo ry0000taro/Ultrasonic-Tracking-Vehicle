@@ -148,7 +148,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
-    Serial_Println(" 2 : Emergency stop (both motors run; motor power OFF stops them)");
+    Serial_Println(" 2 : Emergency stop (both motors run; press the stop button)");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
@@ -231,21 +231,22 @@ static void Test_Buzzer(void)
 }
 
 /* ============================================================
-   Test 2: 緊急停止のテスト（Motor1 と Motor2 を同時に回して、モータ電源のスイッチで止める）
-   緊急停止 = モータ電源の自己保持形スイッチ。PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。
-   スイッチを OFF にすると 12V が切れてモータが止まる。同時に EmergencyStop（SysTick の 10ms 周期の読み取り）が
-   PWM の出力を 0 にしてラッチするので、スイッチを ON に戻してもモータは勝手に回らない。'r' で解除して再開する。
+   Test 2: 緊急停止のテスト（Motor1 と Motor2 を同時に回して、緊急停止ボタンで止める）
+   緊急停止ボタン = モータ電源の押しボタン（ノーマルクローズ形・自己保持しない）。押している間だけ 12V が切れ、離すと戻る。
+   PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。
+   ボタンを押すと 12V が切れてモータが止まる。同時に EmergencyStop（SysTick の 10ms 周期の読み取り）が
+   PWM の出力を 0 にしてラッチするので、ボタンを離して 12V が戻ってもモータは勝手に回らない。'r' で解除して再開する。
    このテストの間だけ緊急停止を有効にする（テスト 4/5/6 には組み込まない）。
    ============================================================ */
 static void Test_EmergencyStop(void)
 {
-    Serial_Println("\r\n[TEST 2] Emergency stop (motor power switch, sensed on PB1: HIGH = ON, LOW = OFF)");
+    Serial_Println("\r\n[TEST 2] Emergency stop (push button cuts the motor 12V; sensed on PB1: HIGH = power ON, LOW = OFF)");
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Motor1 and Motor2 ramp up to %d%% duty and keep running. Turn the motor power switch OFF to stop.\r\n",
+             "Motor1 and Motor2 ramp up to %d%% duty and keep running. Press the emergency stop button to stop.\r\n",
              ESTOP_TEST_DUTY);
     Serial_Print(g_tx_buf);
-    Serial_Println("After the stop, turning the switch ON again must NOT restart the motors. 'r' = clear and restart, 'q' = quit.");
-    Serial_Println("Turn the motor power switch ON first. Press Enter to start, 'q' to cancel...");
+    Serial_Println("After the stop, releasing the button (12V returns) must NOT restart the motors. 'r' = clear and restart, 'q' = quit.");
+    Serial_Println("Do not press the button (motor power ON). Press Enter to start, 'q' to cancel...");
 
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
 
@@ -276,7 +277,7 @@ static void Test_EmergencyStop(void)
                 }
                 else
                 {
-                    Serial_Print("\r  turn the motor power switch ON first\r\n");
+                    Serial_Print("\r  release the emergency stop button first\r\n");
                 }
             }
         }
@@ -286,7 +287,7 @@ static void Test_EmergencyStop(void)
         {
             prev = now;
             snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  %s                                              \r\n",
-                     now ? ">>> motor power ON" : "<<< motor power OFF (emergency stop)");
+                     now ? ">>> button released (motor power ON)" : "<<< button pressed (motor power OFF = emergency stop)");
             Serial_Print(g_tx_buf);
         }
 
@@ -322,7 +323,7 @@ static void Test_EmergencyStop(void)
 
     snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  OFF count = %lu\r\n", (unsigned long)EmergencyStop_OffCount());
     Serial_Print(g_tx_buf);
-    Serial_Println("[TEST 2] Done. Check: switch OFF -> motors stop, STOPPED and latched = 1; switch ON -> motors stay stopped until 'r'.");
+    Serial_Println("[TEST 2] Done. Check: button pressed -> motors stop, STOPPED and latched = 1; released -> motors stay stopped until 'r'.");
 }
 
 /* ============================================================
