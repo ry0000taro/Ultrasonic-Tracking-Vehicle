@@ -107,6 +107,7 @@
 | 液晶（SPI） | PB13 (SCK), PB15 (MOSI), PB12 (CS) | SPI2 (AF5)、CS は GPIO | 液晶は受信のみなので MISO は不要（PB14 は SPI2_MISO ではなく液晶 DC の GPIO に使う） |
 | 液晶 DC/RS, RESET | PB14, PA10 | GPIO出力 | 0 章の変更。旧: PA9 / PA8 |
 | ブザー | PB10 | GPIO出力 | 0 章の変更。旧: PA0（モータ2 の IN2 に使うため移動）。アクティブブザー想定 |
+| 緊急停止の検出（D-15） | PB1（ESTOP_SENSE） | GPIO入力（割り込みなし。SysTick の 10ms 周期で読む） | モータ 12V の分圧（約 3.0V）。HIGH = モータ電源 ON、LOW = OFF。PB1 は EXTI1 を Echo（PC1）が使うため割り込みにできない |
 | 開始/停止スイッチ（FR-15） | PC13 | GPIO入力（S3 / Nucleo B1） | 競合しない唯一のタクトスイッチ。ソフトでチャタリング除去 |
 | 状態表示の補助LED | — | — | PB14 は液晶 DC に使うため、LED D1 は補助表示に使えない（0 章） |
 | デバッグ出力 | PA2, PA3 | USART2 (AF7)、ST-LINK VCP、115200bps | |
@@ -138,7 +139,7 @@
 - Notion の表で「電気系設計側では信号ごとの対応までは確認していない」とされている PA6/PA7/PB4/PB5 と PC8/PC9/PB6/PB7 は、**電気系設計の基板にも同名ピンがある**。同じ配線なのか別かを回路図で確認する。
 - エンコーダの A相/B相の割り当て（PA9=A, PA8=B）が実際の回転方向と合っているか、実機で確認する。
 - ブザー（UDB-05LFPN）がアクティブかパッシブか、データシートで確認する。
-- ERR-03（バッテリー電圧監視）に使えるA/Dピンがなくなった（PC0〜3 は超音波Echo）。ADC対応の空きピン（PA1, PA4, PB0, PB1, PC5 など）に分圧回路を追加する必要がある。
+- ERR-03（バッテリー電圧監視）に使えるA/Dピンがなくなった（PC0〜3 は超音波Echo）。ADC対応の空きピン（PA4, PB0, PC5 など。PA1 はモータ2、PB1 は緊急停止の検出に使う）に分圧回路を追加する必要がある。
 - 液晶（MSP2807）の駆動ICと表示ライブラリ。
 - 3.3Vの供給能力（A/D、I2C、変換モジュール、モータドライバ、液晶LEDが共用）。
 
@@ -154,6 +155,6 @@
 | USART2 | Asynchronous、115200bps、8N1 |
 | TIM1 | Combined Channels: Encoder Mode（PA8, PA9、Period=65535、ラベル ENC1_B=PA8, ENC1_A=PA9） |
 | GPIO出力 | PC10, PC11, PC12, PC4（Trig）、PA10, PB14（液晶 RESET, DC）、PB10（ブザー） |
-| GPIO入力 | PC13（開始/停止）、プルアップは外付け |
+| GPIO入力 | PC13（開始/停止）、PB1（緊急停止の検出。ラベル ESTOP_SENSE、No pull）。プルアップは外付け |
 | GPIO EXTI | PC0〜PC3（Echo、両エッジ） |
 | クロック | HSE 8MHz（Nucleo bypass）→ PLL → SYSCLK 84MHz |

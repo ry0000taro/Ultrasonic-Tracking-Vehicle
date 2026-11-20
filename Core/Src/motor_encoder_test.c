@@ -18,6 +18,7 @@
   */
 #include "motor_encoder_test.h"
 #include "lcd.h"
+#include "emergency_stop.h"
 #include "ultrasonic.h"
 #include <stdio.h>
 #include <string.h>
@@ -53,6 +54,7 @@ static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
 static void Test_Lcd(void);
 static void Test_Ultrasonic(void);
+static void Test_EmergencyStop(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
@@ -83,6 +85,7 @@ void MotorEncoderTest_Run(void)
 
             switch (cmd)
             {
+                case '2': Test_EmergencyStop();     break;
                 case '3': Test_Ultrasonic();        break;
                 case '4': Test_Motors_Encoders();   break;
                 case '5': Test_Motor1_Encoder1();   break;
@@ -91,7 +94,7 @@ void MotorEncoderTest_Run(void)
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 3, 4, 5, 6, 7, 8 or 9.");
+                    Serial_Println("[!] Invalid input. Enter 2, 3, 4, 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -144,6 +147,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
+    Serial_Println(" 2 : Emergency stop (motor power switch, PB1)");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
@@ -223,6 +227,60 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 2: 緊急停止の単体テスト（モータは動かさない）
+   緊急停止 = モータ電源の自己保持形スイッチ。PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。
+   スイッチを押して電源を OFF にすると、EmergencyStop（SysTick の 10ms 周期の読み取り）が検出してラッチする。
+   ============================================================ */
+static void Test_EmergencyStop(void)
+{
+    Serial_Println("\r\n[TEST 2] Emergency stop (motor power switch, sensed on PB1: HIGH = ON, LOW = OFF)");
+    Serial_Println("Turn the motor power switch OFF and ON. 'q' to stop, 'r' to clear the latch and the count.");
+    Serial_Println("raw: PB1 level.  power: after 2 samples (about 20 ms).  latched: stays 1 after OFF until 'r'.");
+
+    Motor1_Set(0);      /* 念のためモータは止めておく */
+    Motor2_Set(0);
+
+    EmergencyStop_Enable(1U);       /* このテストの間だけ、緊急停止（モータ出力の 0 化とラッチ）を有効にする */
+    uint8_t  prev    = EmergencyStop_PowerOn();
+    uint32_t t_print = HAL_GetTick();
+
+    while (1)
+    {
+        char c = 0;
+        if (Serial_ReceiveChar(&c, 5))
+        {
+            if (c == 'q' || c == 'Q') break;
+            if (c == 'r' || c == 'R') EmergencyStop_Clear();
+        }
+
+        uint8_t now = EmergencyStop_PowerOn();
+        if (now != prev)
+        {
+            prev = now;
+            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  %s                                              \r\n",
+                     now ? ">>> motor power ON" : "<<< motor power OFF (emergency stop)");
+            Serial_Print(g_tx_buf);
+        }
+
+        if (HAL_GetTick() - t_print >= 100U)
+        {
+            t_print = HAL_GetTick();
+            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  raw = %d   power = %-3s   OFF count = %lu   latched = %d   ",
+                     (int)HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin),
+                     now ? "ON" : "OFF", (unsigned long)EmergencyStop_OffCount(), (int)EmergencyStop_IsActive());
+            Serial_Print(g_tx_buf);
+        }
+    }
+
+    EmergencyStop_Enable(0U);       /* 無効に戻し、ラッチも解除する（4/5/6 のテストには影響させない） */
+    EmergencyStop_Clear();
+
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  OFF count = %lu\r\n", (unsigned long)EmergencyStop_OffCount());
+    Serial_Print(g_tx_buf);
+    Serial_Println("[TEST 2] Done. Check: switch OFF -> power OFF and latched = 1, switch ON -> power ON, latched stays 1 until 'r'.");
 }
 
 /* ============================================================

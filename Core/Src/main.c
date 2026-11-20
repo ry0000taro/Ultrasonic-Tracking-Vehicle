@@ -587,6 +587,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : ESTOP_SENSE_Pin */
+  GPIO_InitStruct.Pin = ESTOP_SENSE_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ESTOP_SENSE_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pins : BUZZER_Pin LCD_CS_Pin LCD_DC_Pin */
   GPIO_InitStruct.Pin = BUZZER_Pin|LCD_CS_Pin|LCD_DC_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;

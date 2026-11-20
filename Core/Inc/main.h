@@ -87,6 +87,8 @@ void Error_Handler(void);
 #define MOTOR1_IN2_GPIO_Port GPIOA
 #define US4_TRIG_Pin GPIO_PIN_4
 #define US4_TRIG_GPIO_Port GPIOC
+#define ESTOP_SENSE_Pin GPIO_PIN_1
+#define ESTOP_SENSE_GPIO_Port GPIOB
 #define BUZZER_Pin GPIO_PIN_10
 #define BUZZER_GPIO_Port GPIOB
 #define LCD_CS_Pin GPIO_PIN_12
