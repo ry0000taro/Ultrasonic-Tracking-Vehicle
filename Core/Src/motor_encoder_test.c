@@ -8,8 +8,8 @@
   *
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
-  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1, CubeMX 生成の htim1。液晶 RESET/DC を PB14/PB10 に移した)
+  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PA1/PA0 (TIM2 CH2/CH1, CubeMX 生成の htim2。IN1=PA1, IN2=PA0)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA9/PA8 (TIM1 CH2=A相, CH1=B相, ラベル ENC1_A=PA9, ENC1_B=PA8, htim1)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -24,7 +24,7 @@
 #include <stdlib.h>
 
 extern TIM_HandleTypeDef htim1;     /* Encoder1（CubeMX 生成） */
-extern TIM_HandleTypeDef htim3;     /* Motor2 PWM（CubeMX 生成） */
+extern TIM_HandleTypeDef htim2;     /* Motor2 PWM（CubeMX 生成） */
 extern TIM_HandleTypeDef htim4;     /* Encoder2（CubeMX 生成） */
 extern UART_HandleTypeDef huart2;   /* Serial（CubeMX 生成） */
 
@@ -46,6 +46,7 @@ static char g_tx_buf[256];
    Function Prototypes
    ============================================================ */
 static void MotorEncoderTest_Init(void);
+static void Test_Motors_Encoders(void);
 static void Test_Motor1_Encoder1(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
@@ -83,13 +84,14 @@ void MotorEncoderTest_Run(void)
             switch (cmd)
             {
                 case '3': Test_Ultrasonic();        break;
+                case '4': Test_Motors_Encoders();   break;
                 case '5': Test_Motor1_Encoder1();   break;
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 3, 5, 6, 7, 8 or 9.");
+                    Serial_Println("[!] Invalid input. Enter 3, 4, 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -99,7 +101,7 @@ void MotorEncoderTest_Run(void)
 
 static void MotorEncoderTest_Init(void)
 {
-    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA8/PA9) と Encoder2 (PB6/PB7) のプルアップは、
+    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA9/PA8) と Encoder2 (PB6/PB7) のプルアップは、
      *   CubeMX の .ioc に反映できなかった（生成コードが GPIO_NOPULL のまま）ため、ここで手書きで再設定している。
      *   この初期化を通らない本番コードではピンが浮く。.ioc で Pull-up にできたら、この再設定を削除すること。 */
 
@@ -112,7 +114,7 @@ static void MotorEncoderTest_Init(void)
     enc2_gpio.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &enc2_gpio);
 
-    /* Encoder1 (PA8/PA9): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
+    /* Encoder1 (PA9/PA8): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc1_gpio = {0};
     enc1_gpio.Pin       = ENC1_A_Pin | ENC1_B_Pin;
     enc1_gpio.Mode      = GPIO_MODE_AF_PP;
@@ -124,8 +126,8 @@ static void MotorEncoderTest_Init(void)
     /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM3（いずれも CubeMX 生成） */
     HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);          /* Motor2 IN1 (PB4) */
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);          /* Motor2 IN2 (PB5) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);          /* Motor2 IN1 (PA1) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);          /* Motor2 IN2 (PA0) */
     HAL_TIM_PWM_Start(&htim13, TIM_CHANNEL_1);         /* Motor1 IN1 (PA6) */
     HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);         /* Motor1 IN2 (PA7) */
 
@@ -143,10 +145,11 @@ static void Print_Menu(void)
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
+    Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
     Serial_Println(" 5 : Motor1 + Encoder1 test");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
-    Serial_Println(" 8 : Buzzer test (PA0)");
+    Serial_Println(" 8 : Buzzer test (PB10)");
     Serial_Println(" 9 : LCD test (color fill, then STOP / FOLLOW / ERROR)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
@@ -176,7 +179,7 @@ static void Test_Encoder_Monitor(void)
 
         /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 "\r  Enc1 cnt=%7ld (PA9 A=%d PA8 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
                  (long)Encoder1_Get(),
                  (int)HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin),
                  (int)HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin),
@@ -192,14 +195,12 @@ static void Test_Encoder_Monitor(void)
 }
 
 /* ============================================================
-   Test 8: Buzzer test（PA0 = BUZZER）
-   PA0 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
-   注意: PA0 は TE-01 基板ではモータ2の IN1 なので、TE-01 では Motor2 につないだアームが動く。
+   Test 8: Buzzer test（PB10 = BUZZER）
+   PB10 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
    ============================================================ */
 static void Test_Buzzer(void)
 {
-    Serial_Println("\r\n[TEST 8] Buzzer test (PA0)");
-    Serial_Println("NOTE: PA0 is Motor2 IN1 on the TE-01 board. Motor2 will move there.");
+    Serial_Println("\r\n[TEST 8] Buzzer test (PB10)");
     Serial_Println("Press Enter to start, 'q' to cancel...");
 
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
@@ -272,7 +273,7 @@ static void Test_Ultrasonic(void)
 }
 
 /* ============================================================
-   Test 9: LCD test（MSP2807。CS=PB12, RESET=PB14, DC/RS=PB10, SCK=PB13, SDI=PB15）
+   Test 9: LCD test（MSP2807。CS=PB12, RESET=PA10, DC/RS=PB14, SCK=PB13, SDI=PB15）
    単色(赤→緑→青)のあと、状態表示(停止中 → 追従中 → エラー)を順に表示する。
    ============================================================ */
 static void Test_Lcd(void)
@@ -303,6 +304,69 @@ static void Test_Lcd(void)
     Lcd_DrawState(LCD_STATE_ERROR);
 
     Serial_Println("[TEST 9] Done. Check: R,G,B fills, then STOP(red), FOLLOW(green), ERROR(yellow). Last one stays.");
+}
+
+/* ============================================================
+   Test 4: モータ 2 個とエンコーダ 2 個を同時に動かす
+   Motor1 と Motor2 を同じデューティで同時にランプアップして保持し、Encoder1/Encoder2 の値を同時に表示する。
+   ============================================================ */
+static void Test_Motors_Encoders(void)
+{
+    Serial_Println("\r\n[TEST 4] Motor1 + Motor2 + Encoder1 + Encoder2 (simultaneous)");
+    snprintf(g_tx_buf, sizeof(g_tx_buf),
+             "Motor1 and Motor2 ramp 0->%d%% duty together, then hold. Both encoder counts are displayed.\r\n",
+             ENCODER_TEST_DUTY);
+    Serial_Print(g_tx_buf);
+    Serial_Println("Press Enter to start, 'q' to stop...");
+
+    if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
+
+    Encoder1_Reset();
+    Encoder2_Reset();
+
+    /* 300ms(=50ms x 6) ごとに 5% ずつ上げ、ENCODER_TEST_DUTY% に達したら保持する。毎周回 'q' を確認する */
+    Serial_Println("  Ramp up in steps of 5% -- press 'q' to stop");
+
+    int32_t prev1 = Encoder1_Get();
+    int32_t prev2 = Encoder2_Get();
+    int d = 0;
+    char c = 0;
+
+    Motor1_Set(0);
+    Motor2_Set(0);
+    for (int tick = 0; ; tick++)
+    {
+        if (Serial_ReceiveChar(&c, 10))
+        {
+            if (c == 'q' || c == 'Q') break;
+        }
+
+        if (tick % 6 == 0 && d <= ENCODER_TEST_DUTY)
+        {
+            Motor1_Set((int16_t)d);
+            Motor2_Set((int16_t)d);
+            d += 5;
+        }
+
+        int32_t count1 = Encoder1_Get();
+        int32_t count2 = Encoder2_Get();
+        snprintf(g_tx_buf, sizeof(g_tx_buf),
+                 "\r  Enc1 = %7ld (d=%+5ld)   Enc2 = %7ld (d=%+5ld)   ",
+                 (long)count1, (long)(count1 - prev1), (long)count2, (long)(count2 - prev2));
+        Serial_Print(g_tx_buf);
+        prev1 = count1;
+        prev2 = count2;
+
+        HAL_Delay(50);
+    }
+
+    Motor1_Set(0);
+    Motor2_Set(0);
+
+    snprintf(g_tx_buf, sizeof(g_tx_buf),
+             "\r\n  Final: Enc1 = %ld, Enc2 = %ld\r\n", (long)Encoder1_Get(), (long)Encoder2_Get());
+    Serial_Print(g_tx_buf);
+    Serial_Println("[TEST 4] Done. Check that both counts changed while both motors ran.");
 }
 
 /* ============================================================
@@ -484,10 +548,10 @@ static void Motor1_Set(int16_t duty_percent)
     Motor_Set(&htim13, TIM_CHANNEL_1, &htim14, TIM_CHANNEL_1, duty_percent);
 }
 
-/* Motor2: IN1=PB4 (TIM3_CH1), IN2=PB5 (TIM3_CH2) */
+/* Motor2: IN1=PA1 (TIM2_CH2), IN2=PA0 (TIM2_CH1) */
 static void Motor2_Set(int16_t duty_percent)
 {
-    Motor_Set(&htim3, TIM_CHANNEL_1, &htim3, TIM_CHANNEL_2, duty_percent);
+    Motor_Set(&htim2, TIM_CHANNEL_2, &htim2, TIM_CHANNEL_1, duty_percent);
 }
 
 /* ============================================================

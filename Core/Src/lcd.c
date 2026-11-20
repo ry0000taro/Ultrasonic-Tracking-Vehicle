@@ -68,7 +68,7 @@ static void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 /* ---- 公開 API ---- */
 void Lcd_Init(void)
 {
-  /* CS(PB12) / DC(PB10) / RESET(PB14) は CubeMX が GPIO 出力に設定済み。初期レベルだけ決める */
+  /* CS(PB12) / DC(PB14) / RESET(PA10) は CubeMX が GPIO 出力に設定済み。初期レベルだけ決める */
   lcd_cs(1);
   lcd_dc(0);
   lcd_reset(1);
