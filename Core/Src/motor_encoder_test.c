@@ -8,8 +8,8 @@
   *
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
-  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1, CubeMX 生成の htim1。液晶 RESET/DC を PB14/PB10 に移した)
+  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PA1/PA0 (TIM2 CH2/CH1, CubeMX 生成の htim2。IN1=PA1, IN2=PA0)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA9/PA8 (TIM1 CH2=A相, CH1=B相, ラベル ENC1_A=PA9, ENC1_B=PA8, htim1)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -19,12 +19,14 @@
 #include "motor_encoder_test.h"
 #include "lcd_ili9341.h"
 #include "ultrasonic.h"
+#include "position_controller.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 extern TIM_HandleTypeDef htim1;     /* Encoder1（CubeMX 生成） */
-extern TIM_HandleTypeDef htim3;     /* Motor2 PWM（CubeMX 生成） */
+extern TIM_HandleTypeDef htim2;     /* Motor2 PWM（CubeMX 生成） */
 extern TIM_HandleTypeDef htim4;     /* Encoder2（CubeMX 生成） */
 extern UART_HandleTypeDef huart2;   /* Serial（CubeMX 生成） */
 
@@ -34,10 +36,23 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 /* ============================================================
    Constants（原本のまま）
    ============================================================ */
-#define PWM_PERIOD      55999UL     /* CubeMX の TIM3/TIM13/TIM14 の Period と同値 */
+#define PWM_PERIOD      55999UL     /* CubeMX の TIM2/TIM13/TIM14 の Period と同値 */
 #define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
 #define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
+
+/* 位置制御テスト（Test 5, Issue #31）のパラメータ */
+#define MM_PER_COUNT_1     0.039f   /* TODO(#31): 仮の値（2048PPR x4逓倍・出力軸側の計算値）。実機で測った値に置き換える（Encoder1） */
+#define MM_PER_COUNT_2     0.039f   /* TODO(#31): 同上（Encoder2）。左右別々に測る */
+#define POS_MOTOR1_SIGN   -1        /* Motor1 の出力の向き。+1 の duty で逆に進んだため -1（正の duty で前進するなら +1） */
+#define POS_MOTOR2_SIGN   -1        /* 同上（Motor2） */
+#define POS_KP             0.20f    /* 比例ゲイン [duty % / mm]（仮。偏差 100mm で duty 20%、250mm 以上で上限 50%） */
+#define POS_DEADBAND_MM    5.0f     /* 残り偏差がこれ以下で止める [mm] */
+#define POS_DUTY_MIN       20.0f    /* 走行中に出す最小 duty [%]（仮）。これ未満だと動き続けられず、目標の手前で止まる */
+#define POS_KICK_DUTY      30.0f    /* 始動時に出す強めの duty [%]（静止摩擦に勝つため。仮） */
+#define POS_KICK_MS        150U     /* 始動の強めの duty を出す時間 [ms]（仮） */
+#define POS_TARGET_MAX_MM  2000     /* 入力できる目標距離の上限 [mm] */
+#define POS_LOOP_MS        50U      /* 制御周期 [ms] */
 
 static char g_tx_buf[256];
 
@@ -46,7 +61,7 @@ static char g_tx_buf[256];
    Function Prototypes
    ============================================================ */
 static void MotorEncoderTest_Init(void);
-static void Test_Motor1_Encoder1(void);
+static void Test_PositionControl(void);
 static void Test_Motor2_Encoder2(void);
 static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
@@ -57,6 +72,7 @@ static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
 static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms);
 static uint8_t Serial_WaitEnter(void);
+static uint8_t Serial_ReadNumber(uint32_t *value);
 static void Motor1_Set(int16_t duty_percent);
 static void Motor2_Set(int16_t duty_percent);
 static int32_t Encoder1_Get(void);
@@ -83,7 +99,7 @@ void MotorEncoderTest_Run(void)
             switch (cmd)
             {
                 case '3': Test_Ultrasonic();        break;
-                case '5': Test_Motor1_Encoder1();   break;
+                case '5': Test_PositionControl();   break;
                 case '6': Test_Motor2_Encoder2();   break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
@@ -99,7 +115,7 @@ void MotorEncoderTest_Run(void)
 
 static void MotorEncoderTest_Init(void)
 {
-    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA8/PA9) と Encoder2 (PB6/PB7) のプルアップは、
+    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA9/PA8) と Encoder2 (PB6/PB7) のプルアップは、
      *   CubeMX の .ioc に反映できなかった（生成コードが GPIO_NOPULL のまま）ため、ここで手書きで再設定している。
      *   この初期化を通らない本番コードではピンが浮く。.ioc で Pull-up にできたら、この再設定を削除すること。 */
 
@@ -112,7 +128,7 @@ static void MotorEncoderTest_Init(void)
     enc2_gpio.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &enc2_gpio);
 
-    /* Encoder1 (PA8/PA9): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
+    /* Encoder1 (PA9/PA8): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc1_gpio = {0};
     enc1_gpio.Pin       = ENC1_A_Pin | ENC1_B_Pin;
     enc1_gpio.Mode      = GPIO_MODE_AF_PP;
@@ -121,11 +137,11 @@ static void MotorEncoderTest_Init(void)
     enc1_gpio.Alternate = GPIO_AF1_TIM1;
     HAL_GPIO_Init(GPIOA, &enc1_gpio);
 
-    /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM3（いずれも CubeMX 生成） */
+    /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM2（いずれも CubeMX 生成） */
     HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);          /* Motor2 IN1 (PB4) */
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);          /* Motor2 IN2 (PB5) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);          /* Motor2 IN1 (PA1) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);          /* Motor2 IN2 (PA0) */
     HAL_TIM_PWM_Start(&htim13, TIM_CHANNEL_1);         /* Motor1 IN1 (PA6) */
     HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);         /* Motor1 IN2 (PA7) */
 
@@ -143,10 +159,10 @@ static void Print_Menu(void)
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
-    Serial_Println(" 5 : Motor1 + Encoder1 test");
+    Serial_Println(" 5 : Position control (enter target distance, Motor1 + Motor2)");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
-    Serial_Println(" 8 : Buzzer test (PA0)");
+    Serial_Println(" 8 : Buzzer test (PB10)");
     Serial_Println(" 9 : LCD test (color fill + color bands)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
@@ -176,7 +192,7 @@ static void Test_Encoder_Monitor(void)
 
         /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 "\r  Enc1 cnt=%7ld (PA9 A=%d PA8 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
                  (long)Encoder1_Get(),
                  (int)HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin),
                  (int)HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin),
@@ -192,14 +208,12 @@ static void Test_Encoder_Monitor(void)
 }
 
 /* ============================================================
-   Test 8: Buzzer test（PA0 = BUZZER）
-   PA0 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
-   注意: PA0 は TE-01 基板ではモータ2の IN1 なので、TE-01 では Motor2 につないだアームが動く。
+   Test 8: Buzzer test（PB10 = BUZZER）
+   PB10 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
    ============================================================ */
 static void Test_Buzzer(void)
 {
-    Serial_Println("\r\n[TEST 8] Buzzer test (PA0)");
-    Serial_Println("NOTE: PA0 is Motor2 IN1 on the TE-01 board. Motor2 will move there.");
+    Serial_Println("\r\n[TEST 8] Buzzer test (PB10)");
     Serial_Println("Press Enter to start, 'q' to cancel...");
 
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
@@ -283,65 +297,132 @@ static void Test_Lcd(void)
 }
 
 /* ============================================================
-   Test 5: Motor1 + Encoder1 Test（LED 表示のみ除いて原本のまま）
+   Test 5: 位置制御テスト（Issue #31 / 親 #3）
+   目標距離 [mm] を入力し、Motor1 + Motor2 をエンコーダで測った距離で制御して、目標に着いたら止める。
+   制御器（P 制御）は position_controller.c にあり、ここでは偏差を渡して出力を受け取るだけ。
    ============================================================ */
-static void Test_Motor1_Encoder1(void)
-{
-    Serial_Println("\r\n[TEST 5] Motor1 + Encoder1 Test");
-    snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Motor1 ramps 0->%d%% duty then holds. Encoder1 count is displayed.\r\n",
-             ENCODER_TEST_DUTY);
-    Serial_Print(g_tx_buf);
-    Serial_Println("Press Enter to start, 'q' to stop...");
 
+/* Return: 1=入力できた（*value に値）, 0='q' でキャンセル。数字と Enter だけ受け付ける（BS で 1 文字消す） */
+static uint8_t Serial_ReadNumber(uint32_t *value)
+{
+    uint32_t v = 0U;
+    int digits = 0;
     char c = 0;
+
+    while (1)
+    {
+        if (!Serial_ReceiveChar(&c, HAL_MAX_DELAY)) continue;
+
+        if (c == 'q' || c == 'Q') return 0U;
+        if ((c == 13 || c == 10) && digits > 0) { *value = v; return 1U; }
+        if (c >= '0' && c <= '9' && digits < 5)         /* 5 桁まで（桁あふれ防止） */
+        {
+            v = v * 10U + (uint32_t)(c - '0');
+            digits++;
+            HAL_UART_Transmit(&huart2, (uint8_t *)&c, 1, UART_TIMEOUT);
+        }
+        else if ((c == 8 || c == 127) && digits > 0)
+        {
+            v /= 10U;
+            digits--;
+            Serial_Print("\b \b");
+        }
+    }
+}
+
+static void Test_PositionControl(void)
+{
+    Serial_Println("\r\n[TEST 5] Position control (Motor1 + Motor2, Encoder1 + Encoder2)");
+    snprintf(g_tx_buf, sizeof(g_tx_buf),
+             "Enter target distance [mm] (1-%d) then Enter, 'q' to cancel. While running, 'q' stops.\r\n", POS_TARGET_MAX_MM);
+    Serial_Print(g_tx_buf);
+    Serial_Print("Target [mm] > ");
+
+    uint32_t target = 0U;
+    while (1)
+    {
+        if (!Serial_ReadNumber(&target)) { Serial_Println("\r\nCancelled."); return; }
+        if (target >= 1U && target <= (uint32_t)POS_TARGET_MAX_MM) break;
+        snprintf(g_tx_buf, sizeof(g_tx_buf),
+                 "\r\n[!] Out of range. Enter 1-%d.\r\nTarget [mm] > ", POS_TARGET_MAX_MM);
+        Serial_Print(g_tx_buf);
+    }
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\nTarget = %lu mm. Press Enter to start, 'q' to cancel...\r\n",
+             (unsigned long)target);
+    Serial_Print(g_tx_buf);
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
+
+    /* 左右それぞれに制御器を持つ（今は同じ P ゲイン） */
+    PosCtrl ctrl[2];
+    PosCtrl_Init(&ctrl[0], POS_KP);
+    PosCtrl_Init(&ctrl[1], POS_KP);
 
     Encoder1_Reset();
     Encoder2_Reset();
 
-    /* 0% から ENCODER_TEST_DUTY% まで 300ms(=50ms x 6) ごとに 5% ずつ上げ、到達後は保持する。
-     * 昇圧中も含め、ループのたびに 'q' を確認する。 */
-    Serial_Println("  Ramp up in steps of 5% -- press 'q' to stop");
+    uint8_t done[2] = { 0U, 0U };
+    uint8_t stopped = 0U;           /* 1: 'q' で途中停止した */
+    float   dist[2] = { 0.0f, 0.0f };
+    float   duty[2] = { 0.0f, 0.0f };
+    uint32_t t_start = HAL_GetTick();
 
-    int32_t prev_count = Encoder1_Get();
-    int32_t count = 0;
-    int d = 0;
-
-    Motor1_Set(0);
-    for (int tick = 0; ; tick++)
+    while (!(done[0] && done[1]))
     {
-        if (Serial_ReceiveChar(&c, 10))
+        dist[0] = fabsf((float)Encoder1_Get() * MM_PER_COUNT_1);      /* 進んだ距離は常にプラス（マイナスならプラスに補正） */
+        dist[1] = fabsf((float)Encoder2_Get() * MM_PER_COUNT_2);
+
+        for (int i = 0; i < 2; i++)
         {
-            if (c == 'q' || c == 'Q') break;
+            float error = (float)target - dist[i];                  /* 偏差 [mm] */
+
+            if (done[i] || error <= POS_DEADBAND_MM)                /* 着いた、または行き過ぎ → 止めるだけ（後退しない） */
+            {
+                done[i] = 1U;
+                duty[i] = 0.0f;
+                continue;
+            }
+
+            float out = PosCtrl_Update(&ctrl[i], error);            /* 偏差 → 操作量 [%] */
+            if (out < POS_DUTY_MIN)               out = POS_DUTY_MIN;
+            if (HAL_GetTick() - t_start < POS_KICK_MS && out < POS_KICK_DUTY)
+                out = POS_KICK_DUTY;                                /* 始動時だけ強めに出して、静止摩擦に勝つ */
+            if (out > (float)PWM_DUTY_MAX)        out = (float)PWM_DUTY_MAX;
+            duty[i] = out;
         }
 
-        if (tick % 6 == 0 && d <= ENCODER_TEST_DUTY)
-        {
-            Motor1_Set((int16_t)d);
-            d += 5;
-        }
+        Motor1_Set((int16_t)(POS_MOTOR1_SIGN * (int)(duty[0] + 0.5f)));
+        Motor2_Set((int16_t)(POS_MOTOR2_SIGN * (int)(duty[1] + 0.5f)));
 
-        count = Encoder1_Get();
-        int32_t delta = count - prev_count;
-        prev_count = count;
-
-        /* Motor1 に付いているエンコーダがどちらか分からないため、Encoder2 も併記する */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Encoder1 count = %7ld  (delta/50ms = %+ld)   Encoder2 count = %7ld   ",
-                 (long)count, (long)delta, (long)Encoder2_Get());
+                 "\r  L: %5ld mm (duty %2d%%)   R: %5ld mm (duty %2d%%)   target %lu mm   ",
+                 (long)dist[0], (int)(duty[0] + 0.5f), (long)dist[1], (int)(duty[1] + 0.5f),
+                 (unsigned long)target);
         Serial_Print(g_tx_buf);
 
-        HAL_Delay(50);
+        /* 制御周期の待ちを兼ねて、'q' が押されたら途中でも止める */
+        char key = 0;
+        if (Serial_ReceiveChar(&key, POS_LOOP_MS) && (key == 'q' || key == 'Q'))
+        {
+            stopped = 1U;
+            break;
+        }
     }
 
     Motor1_Set(0);
+    Motor2_Set(0);
+    if (stopped) Serial_Println("\r\n  Stopped by user ('q').");
 
-    count = Encoder1_Get();
+    /* 止まった後、惰性で動いた分まで含めて最終距離を測る */
+    HAL_Delay(500);
+    dist[0] = fabsf((float)Encoder1_Get() * MM_PER_COUNT_1);
+    dist[1] = fabsf((float)Encoder2_Get() * MM_PER_COUNT_2);
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "\r\n  Final count = %ld\r\n", (long)count);
+             "\r\n  Final  L = %ld mm (error %+ld)   R = %ld mm (error %+ld)\r\n",
+             (long)dist[0], (long)dist[0] - (long)target,
+             (long)dist[1], (long)dist[1] - (long)target);
     Serial_Print(g_tx_buf);
-    Serial_Println("[TEST 5] Done. Check that count changed while motor was running.");
+    Serial_Println(stopped ? "[TEST 5] Stopped before reaching the target."
+                           : "[TEST 5] Done. Check that the error is within +/-50 mm.");
 }
 
 /* ============================================================
@@ -461,10 +542,10 @@ static void Motor1_Set(int16_t duty_percent)
     Motor_Set(&htim13, TIM_CHANNEL_1, &htim14, TIM_CHANNEL_1, duty_percent);
 }
 
-/* Motor2: IN1=PB4 (TIM3_CH1), IN2=PB5 (TIM3_CH2) */
+/* Motor2: IN1=PA1 (TIM2_CH2), IN2=PA0 (TIM2_CH1) */
 static void Motor2_Set(int16_t duty_percent)
 {
-    Motor_Set(&htim3, TIM_CHANNEL_1, &htim3, TIM_CHANNEL_2, duty_percent);
+    Motor_Set(&htim2, TIM_CHANNEL_2, &htim2, TIM_CHANNEL_1, duty_percent);
 }
 
 /* ============================================================
