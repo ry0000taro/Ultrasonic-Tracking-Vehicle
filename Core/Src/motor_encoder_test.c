@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 extern TIM_HandleTypeDef htim1;     /* Encoder1（CubeMX 生成） */
 extern TIM_HandleTypeDef htim2;     /* Motor2 PWM（CubeMX 生成） */
@@ -43,11 +44,13 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 /* 位置制御テスト（Test 5, Issue #31）のパラメータ */
 #define MM_PER_COUNT_1     0.039f   /* TODO(#31): 仮の値（2048PPR x4逓倍・出力軸側の計算値）。実機で測った値に置き換える（Encoder1） */
 #define MM_PER_COUNT_2     0.039f   /* TODO(#31): 同上（Encoder2）。左右別々に測る */
-#define POS_ENC1_SIGN      1.0f     /* 前進でカウントが増えるなら +1、減るなら -1（Encoder1） */
-#define POS_ENC2_SIGN      1.0f     /* 同上（Encoder2） */
+#define POS_MOTOR1_SIGN   -1        /* Motor1 の出力の向き。+1 の duty で逆に進んだため -1（正の duty で前進するなら +1） */
+#define POS_MOTOR2_SIGN   -1        /* 同上（Motor2） */
 #define POS_KP             0.10f    /* 比例ゲイン [duty % / mm]（仮。偏差 100mm で duty 10%） */
 #define POS_DEADBAND_MM    5.0f     /* 残り偏差がこれ以下で止める [mm] */
 #define POS_DUTY_MIN       10.0f    /* 動き出せる最小 duty [%]（仮） */
+#define POS_KICK_DUTY      30.0f    /* 始動時に出す強めの duty [%]（静止摩擦に勝つため。仮） */
+#define POS_KICK_MS        150U     /* 始動の強めの duty を出す時間 [ms]（仮） */
 #define POS_TARGET_MAX_MM  2000     /* 入力できる目標距離の上限 [mm] */
 #define POS_LOOP_MS        50U      /* 制御周期 [ms] */
 
@@ -361,11 +364,12 @@ static void Test_PositionControl(void)
     uint8_t stopped = 0U;           /* 1: 'q' で途中停止した */
     float   dist[2] = { 0.0f, 0.0f };
     float   duty[2] = { 0.0f, 0.0f };
+    uint32_t t_start = HAL_GetTick();
 
     while (!(done[0] && done[1]))
     {
-        dist[0] = (float)Encoder1_Get() * POS_ENC1_SIGN * MM_PER_COUNT_1;
-        dist[1] = (float)Encoder2_Get() * POS_ENC2_SIGN * MM_PER_COUNT_2;
+        dist[0] = fabsf((float)Encoder1_Get() * MM_PER_COUNT_1);      /* 進んだ距離は常にプラス（マイナスならプラスに補正） */
+        dist[1] = fabsf((float)Encoder2_Get() * MM_PER_COUNT_2);
 
         for (int i = 0; i < 2; i++)
         {
@@ -380,12 +384,14 @@ static void Test_PositionControl(void)
 
             float out = PosCtrl_Update(&ctrl[i], error);            /* 偏差 → 操作量 [%] */
             if (out < POS_DUTY_MIN)               out = POS_DUTY_MIN;
+            if (HAL_GetTick() - t_start < POS_KICK_MS && out < POS_KICK_DUTY)
+                out = POS_KICK_DUTY;                                /* 始動時だけ強めに出して、静止摩擦に勝つ */
             if (out > (float)PWM_DUTY_MAX)        out = (float)PWM_DUTY_MAX;
             duty[i] = out;
         }
 
-        Motor1_Set((int16_t)(duty[0] + 0.5f));
-        Motor2_Set((int16_t)(duty[1] + 0.5f));
+        Motor1_Set((int16_t)(POS_MOTOR1_SIGN * (int)(duty[0] + 0.5f)));
+        Motor2_Set((int16_t)(POS_MOTOR2_SIGN * (int)(duty[1] + 0.5f)));
 
         snprintf(g_tx_buf, sizeof(g_tx_buf),
                  "\r  L: %5ld mm (duty %2d%%)   R: %5ld mm (duty %2d%%)   target %lu mm   ",
@@ -408,8 +414,8 @@ static void Test_PositionControl(void)
 
     /* 止まった後、惰性で動いた分まで含めて最終距離を測る */
     HAL_Delay(500);
-    dist[0] = (float)Encoder1_Get() * POS_ENC1_SIGN * MM_PER_COUNT_1;
-    dist[1] = (float)Encoder2_Get() * POS_ENC2_SIGN * MM_PER_COUNT_2;
+    dist[0] = fabsf((float)Encoder1_Get() * MM_PER_COUNT_1);
+    dist[1] = fabsf((float)Encoder2_Get() * MM_PER_COUNT_2);
     snprintf(g_tx_buf, sizeof(g_tx_buf),
              "\r\n  Final  L = %ld mm (error %+ld)   R = %ld mm (error %+ld)\r\n",
              (long)dist[0], (long)dist[0] - (long)target,
