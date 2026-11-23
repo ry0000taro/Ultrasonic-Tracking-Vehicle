@@ -20,6 +20,7 @@
 #include "lcd_ili9341.h"
 #include "ultrasonic.h"
 #include "position_controller.h"
+#include "speed_controller.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -54,6 +55,20 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define POS_TARGET_MAX_MM  2000     /* 入力できる目標距離の上限 [mm] */
 #define POS_LOOP_MS        50U      /* 制御周期 [ms] */
 
+/* 速度制御テスト（Test 6, Issue #33）のパラメータ（MM_PER_COUNT_1/2 と POS_MOTOR1/2_SIGN は上と共通） */
+#define SPD_TARGET_MAX_MMPS 500     /* 入力できる目標速度の上限 [mm/s]（最大 0.5 m/s） */
+#define SPD_KP              0.05f   /* 比例ゲイン [duty % / (mm/s)]（仮） */
+#define SPD_KI              0.30f   /* 積分ゲイン [duty % / (mm/s·s)]（仮） */
+#define SPD_INTEG_MAX       40.0f   /* 積分項の上限 [duty %]（仮） */
+#define SPD_ACCEL_MMPS2     300.0f  /* 目標速度の加速の制限 [mm/s^2]（0.3 m/s^2） */
+#define SPD_LOOP_MS         10U     /* 制御周期 [ms]（設計書は 1 ms。テストでは 10 ms） */
+#define SPD_HIST_NUM        6U      /* 速度を求めるために保存するカウントの件数（窓 = (件数-1) x 周期 = 50 ms） */
+#define SPD_KICK_DUTY       30.0f   /* 始動時に出す強めの duty [%]（位置制御テストと同じ） */
+#define SPD_KICK_MS         150U    /* 始動の強めの duty を出す時間 [ms] */
+#define SPD_BAND_RATIO      0.10f   /* 目標速度に「達した」とみなす範囲（目標の ±10 %） */
+#define SPD_HOLD_MS         4000U   /* 目標速度に達してから止めるまでの時間 [ms] */
+#define SPD_PRINT_MS        100U    /* 表示の間隔 [ms] */
+
 static char g_tx_buf[256];
 
 
@@ -62,7 +77,7 @@ static char g_tx_buf[256];
    ============================================================ */
 static void MotorEncoderTest_Init(void);
 static void Test_PositionControl(void);
-static void Test_Motor2_Encoder2(void);
+static void Test_SpeedControl(void);
 static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
 static void Test_Lcd(void);
@@ -100,7 +115,7 @@ void MotorEncoderTest_Run(void)
             {
                 case '3': Test_Ultrasonic();        break;
                 case '5': Test_PositionControl();   break;
-                case '6': Test_Motor2_Encoder2();   break;
+                case '6': Test_SpeedControl();       break;
                 case '7': Test_Encoder_Monitor();   break;
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
@@ -160,7 +175,7 @@ static void Print_Menu(void)
     Serial_Println("================================================");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 5 : Position control (enter target distance, Motor1 + Motor2)");
-    Serial_Println(" 6 : Motor2 + Encoder2 test");
+    Serial_Println(" 6 : Speed control (enter target speed, Motor1 + Motor2)");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
     Serial_Println(" 8 : Buzzer test (PB10)");
     Serial_Println(" 9 : LCD test (color fill + color bands)");
@@ -426,64 +441,184 @@ static void Test_PositionControl(void)
 }
 
 /* ============================================================
-   Test 6: Motor2 + Encoder2 Test（LED 表示のみ除いて原本のまま）
+   Test 6: 速度制御テスト（Issue #33 / 親 #5）
+   目標速度 [mm/s] を入力し、Motor1 + Motor2 をエンコーダで測った速度で PI 制御して、その速度で走らせる。
+   目標速度に達して SPD_HOLD_MS（4 秒）たったら止める。途中で 'q' を押しても止める。
+   制御器（PI）は speed_controller.c にあり、ここでは偏差を渡して出力を受け取るだけ。
    ============================================================ */
-static void Test_Motor2_Encoder2(void)
+static void Test_SpeedControl(void)
 {
-    Serial_Println("\r\n[TEST 6] Motor2 + Encoder2 Test");
+    Serial_Println("\r\n[TEST 6] Speed control (Motor1 + Motor2, Encoder1 + Encoder2)");
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Motor2 ramps 0->%d%% duty then holds. Encoder2 count is displayed.\r\n",
-             ENCODER_TEST_DUTY);
+             "Enter target speed [mm/s] (1-%d) then Enter, 'q' to cancel.\r\n"
+             "Stops %d s after reaching the target speed (within +/-%d%%), or when 'q' is pressed.\r\n",
+             SPD_TARGET_MAX_MMPS, (int)(SPD_HOLD_MS / 1000U), (int)(SPD_BAND_RATIO * 100.0f));
     Serial_Print(g_tx_buf);
-    Serial_Println("Press Enter to start, 'q' to stop...");
+    Serial_Print("Target [mm/s] > ");
 
-    char c = 0;
+    uint32_t target = 0U;
+    while (1)
+    {
+        if (!Serial_ReadNumber(&target)) { Serial_Println("\r\nCancelled."); return; }
+        if (target >= 1U && target <= (uint32_t)SPD_TARGET_MAX_MMPS) break;
+        snprintf(g_tx_buf, sizeof(g_tx_buf),
+                 "\r\n[!] Out of range. Enter 1-%d.\r\nTarget [mm/s] > ", SPD_TARGET_MAX_MMPS);
+        Serial_Print(g_tx_buf);
+    }
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\nTarget = %lu mm/s. Press Enter to start, 'q' to cancel...\r\n",
+             (unsigned long)target);
+    Serial_Print(g_tx_buf);
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
 
+    /* 左右それぞれに制御器を持つ（今は同じゲイン） */
+    SpeedCtrl ctrl[2];
+    SpeedCtrl_Init(&ctrl[0], SPD_KP, SPD_KI, SPD_INTEG_MAX);
+    SpeedCtrl_Init(&ctrl[1], SPD_KP, SPD_KI, SPD_INTEG_MAX);
+
+    Encoder1_Reset();
     Encoder2_Reset();
 
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Ramp up: 0 -> %d%%\r\n", ENCODER_TEST_DUTY);
-    Serial_Print(g_tx_buf);
-    for (int d = 0; d <= ENCODER_TEST_DUTY; d += 5)
-    {
-        Motor2_Set((int16_t)d);
-        snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "  Motor2 duty = %2d%%\r\n", d);
-        Serial_Print(g_tx_buf);
-        HAL_Delay(300);
-    }
-    snprintf(g_tx_buf, sizeof(g_tx_buf), "  Hold at %d%% -- press 'q' to stop\r\n", ENCODER_TEST_DUTY);
-    Serial_Print(g_tx_buf);
+    const float mm_per_count[2] = { MM_PER_COUNT_1, MM_PER_COUNT_2 };
+    const int   motor_sign[2]   = { POS_MOTOR1_SIGN, POS_MOTOR2_SIGN };
 
-    int32_t prev_count = 0;
-    int32_t count = 0;
+    /* 速度は、SPD_WINDOW_MS 前のカウントとの差から求める（1 カウントの数え誤差を小さくするため、窓を長めにとる） */
+    int32_t  cnt_hist[SPD_HIST_NUM][2];
+    uint32_t tick_hist[SPD_HIST_NUM];
+    uint32_t hist_n = 0U;                        /* 保存した件数（SPD_HIST_NUM で頭打ち） */
+
+    float    speed[2]   = { 0.0f, 0.0f };        /* 現在速度 [mm/s] */
+    float    duty[2]    = { 0.0f, 0.0f };
+    float    ref        = 0.0f;                  /* 加速を制限した目標速度 [mm/s] */
+    uint8_t  reached    = 0U;
+    uint32_t t_reached  = 0U;
+    float    sum_speed[2] = { 0.0f, 0.0f };      /* 到達後の速度の合計（平均を出すため） */
+    uint32_t sum_n      = 0U;
+    uint8_t  stopped    = 0U;                    /* 1: 'q' で止めた */
+
+    uint32_t t_start    = HAL_GetTick();
+    uint32_t t_prev     = t_start;
+    uint32_t t_next     = t_start;
+    uint32_t t_print    = t_start;
 
     while (1)
     {
-        if (Serial_ReceiveChar(&c, 10))
+        /* 周期を待つ。待っている間に 'q' を確認する */
+        t_next += SPD_LOOP_MS;
+        while ((int32_t)(HAL_GetTick() - t_next) < 0)
         {
-            if (c == 'q' || c == 'Q') break;
+            if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
+            {
+                char key = (char)(huart2.Instance->DR & 0xFFU);
+                if (key == 'q' || key == 'Q') { stopped = 1U; }
+            }
+        }
+        if (stopped) break;
+
+        uint32_t now = HAL_GetTick();
+        float    dt  = (float)(now - t_prev) / 1000.0f;                 /* 実際の経過時間 [s] */
+        t_prev = now;
+
+        /* 現在速度を求める */
+        int32_t cnt[2] = { Encoder1_Get(), Encoder2_Get() };
+        for (uint32_t i = SPD_HIST_NUM - 1U; i > 0U; i--)
+        {
+            cnt_hist[i][0] = cnt_hist[i - 1U][0];
+            cnt_hist[i][1] = cnt_hist[i - 1U][1];
+            tick_hist[i]   = tick_hist[i - 1U];
+        }
+        cnt_hist[0][0] = cnt[0];
+        cnt_hist[0][1] = cnt[1];
+        tick_hist[0]   = now;
+        if (hist_n < SPD_HIST_NUM) hist_n++;
+
+        if (hist_n >= SPD_HIST_NUM)
+        {
+            float window_s = (float)(tick_hist[0] - tick_hist[SPD_HIST_NUM - 1U]) / 1000.0f;
+            for (int i = 0; i < 2; i++)
+            {
+                float d = (float)(cnt_hist[0][i] - cnt_hist[SPD_HIST_NUM - 1U][i]) * mm_per_count[i];
+                speed[i] = fabsf(d) / window_s;                         /* 速度は常にプラス（マイナスならプラスに補正） */
+            }
         }
 
-        count = Encoder2_Get();
-        int32_t delta = count - prev_count;
-        prev_count = count;
+        /* 目標速度は、加速のみ SPD_ACCEL_MMPS2 に制限する */
+        if (ref < (float)target)
+        {
+            ref += SPD_ACCEL_MMPS2 * dt;
+            if (ref > (float)target) ref = (float)target;
+        }
 
-        snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Encoder2 count = %7ld  (delta/50ms = %+ld)   ",
-                 (long)count, (long)delta);
-        Serial_Print(g_tx_buf);
+        /* 到達の判定：左右ともに目標速度の ±SPD_BAND_RATIO 以内になったら到達とし、そこから SPD_HOLD_MS 数える */
+        float band = (float)target * SPD_BAND_RATIO;
+        if (!reached && hist_n >= SPD_HIST_NUM
+            && fabsf(speed[0] - (float)target) <= band && fabsf(speed[1] - (float)target) <= band)
+        {
+            reached   = 1U;
+            t_reached = now;
+            Serial_Println("\r\n  -- Reached the target speed. Holding... --");
+        }
+        if (reached)
+        {
+            sum_speed[0] += speed[0];
+            sum_speed[1] += speed[1];
+            sum_n++;
+            if (now - t_reached >= SPD_HOLD_MS) break;
+        }
 
-        HAL_Delay(50);
+        /* 速度 PI 制御：偏差 → 操作量 [%] */
+        for (int i = 0; i < 2; i++)
+        {
+            float error;
+            float out;
+
+            if (now - t_start < SPD_KICK_MS)
+            {
+                out = SPD_KICK_DUTY;                                    /* 始動時だけ強めに出して、静止摩擦に勝つ */
+                SpeedCtrl_Reset(&ctrl[i]);
+            }
+            else
+            {
+                error = ref - speed[i];
+                out   = SpeedCtrl_Update(&ctrl[i], error, dt);
+            }
+            if (out < 0.0f)                out = 0.0f;                  /* 後退はしない */
+            if (out > (float)PWM_DUTY_MAX) out = (float)PWM_DUTY_MAX;
+            duty[i] = out;
+        }
+        Motor1_Set((int16_t)(motor_sign[0] * (int)(duty[0] + 0.5f)));
+        Motor2_Set((int16_t)(motor_sign[1] * (int)(duty[1] + 0.5f)));
+
+        if (now - t_print >= SPD_PRINT_MS)
+        {
+            t_print = now;
+            snprintf(g_tx_buf, sizeof(g_tx_buf),
+                     "\r  ref %3ld  L %4ld (%2d%%)  R %4ld (%2d%%) mm/s   ",
+                     (long)ref, (long)speed[0], (int)(duty[0] + 0.5f), (long)speed[1], (int)(duty[1] + 0.5f));
+            Serial_Print(g_tx_buf);
+        }
     }
 
+    Motor1_Set(0);
     Motor2_Set(0);
 
-    count = Encoder2_Get();
-    snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "\r\n  Final count = %ld\r\n", (long)count);
-    Serial_Print(g_tx_buf);
-    Serial_Println("[TEST 6] Done. Check that count changed while motor was running.");
+    if (stopped) Serial_Println("\r\n  Stopped by user ('q').");
+    else         Serial_Println("\r\n  Stopped (hold time elapsed).");
+
+    if (sum_n > 0U)
+    {
+        float avg[2] = { sum_speed[0] / (float)sum_n, sum_speed[1] / (float)sum_n };
+        snprintf(g_tx_buf, sizeof(g_tx_buf),
+                 "  Average after reaching:  L = %ld mm/s (%+ld%%)   R = %ld mm/s (%+ld%%)   target %lu mm/s\r\n",
+                 (long)avg[0], (long)((avg[0] - (float)target) * 100.0f / (float)target),
+                 (long)avg[1], (long)((avg[1] - (float)target) * 100.0f / (float)target),
+                 (unsigned long)target);
+        Serial_Print(g_tx_buf);
+    }
+    else
+    {
+        Serial_Println("  The target speed was not reached.");
+    }
+    Serial_Println("[TEST 6] Done. Check that the speed error is within +/-10%.");
 }
 
 /* ============================================================
