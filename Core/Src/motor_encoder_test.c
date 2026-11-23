@@ -55,6 +55,7 @@ static void Test_Encoder_Monitor(void);
 static void Test_Buzzer(void);
 static void Test_Lcd(void);
 static void Test_Ultrasonic(void);
+static void Test_SwitchDetect(void);
 static void Test_EmergencyStop(void);
 static void Print_Menu(void);
 static void Serial_Print(const char *str);
@@ -86,6 +87,7 @@ void MotorEncoderTest_Run(void)
 
             switch (cmd)
             {
+                case '1': Test_SwitchDetect();      break;
                 case '2': Test_EmergencyStop();     break;
                 case '3': Test_Ultrasonic();        break;
                 case '4': Test_Motors_Encoders();   break;
@@ -95,7 +97,7 @@ void MotorEncoderTest_Run(void)
                 case '8': Test_Buzzer();            break;
                 case '9': Test_Lcd();               break;
                 default:
-                    Serial_Println("[!] Invalid input. Enter 2, 3, 4, 5, 6, 7, 8 or 9.");
+                    Serial_Println("[!] Invalid input. Enter 1, 2, 3, 4, 5, 6, 7, 8 or 9.");
                     break;
             }
             Print_Menu();
@@ -148,6 +150,7 @@ static void Print_Menu(void)
     Serial_Println("   Motor + Encoder test  (Issue #18)");
     Serial_Println("   STM32F446RE  Nucleo-64");
     Serial_Println("================================================");
+    Serial_Println(" 1 : Switch ON/OFF detection (PB1, no motors)");
     Serial_Println(" 2 : Emergency stop (both motors run; press the stop button)");
     Serial_Println(" 3 : Ultrasonic (4 sensors, distance in mm)");
     Serial_Println(" 4 : Motor1 + Motor2 + Encoder1 + Encoder2 (all at once)");
@@ -228,6 +231,74 @@ static void Test_Buzzer(void)
     HAL_GPIO_WritePin(BUZZER_GPIO_Port, BUZZER_Pin, GPIO_PIN_RESET);
 
     Serial_Println("[TEST 8] Done. Check that the buzzer sounded 3 short + 1 long.");
+}
+
+/* ============================================================
+   Test 1: スイッチ（モータ電源の緊急停止ボタン）の ON/OFF の検出テスト（モータは動かさない）
+   PB1（ESTOP_SENSE）がモータ 12V の分圧を読む（HIGH = 電源 ON、LOW = OFF）。ボタンを押している間だけ OFF になる。
+   生のレベル（raw）と、100ms の間に HIGH だった割合、確定後の状態（EmergencyStop の判定）、ON/OFF の変化の回数を表示する。
+   確定の条件: raw が 5 回連続で LOW なら OFF（約 50ms）、2 回連続で HIGH なら ON（約 20ms）。
+   ============================================================ */
+static void Test_SwitchDetect(void)
+{
+    Serial_Println("\r\n[TEST 1] Switch ON/OFF detection (PB1: HIGH = motor power ON, LOW = OFF)");
+    Serial_Println("Press and release the emergency stop button. Motors stay OFF. 'q' to stop, 'r' to reset the counts.");
+    Serial_Println("raw: PB1 level.  high: share of HIGH in the last 100 ms (1 ms sampling).  state: confirmed by EmergencyStop.");
+
+    Motor1_Set(0);      /* 念のためモータは止めておく */
+    Motor2_Set(0);
+
+    uint8_t  prev     = EmergencyStop_PowerOn();
+    uint32_t n_on     = 0U;                 /* OFF → ON と確定した回数 */
+    uint32_t n_off    = 0U;                 /* ON → OFF と確定した回数 */
+    uint32_t t_edge   = HAL_GetTick();      /* 状態が変わった時刻 */
+    uint32_t t_print  = HAL_GetTick();
+    uint32_t samples  = 0U;
+    uint32_t highs    = 0U;
+
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "  initial state: %s\r\n", prev ? "ON" : "OFF");
+    Serial_Print(g_tx_buf);
+
+    while (1)
+    {
+        char c = 0;
+        if (Serial_ReceiveChar(&c, 1))          /* 受信待ち 1ms を、読み取り間隔の待ちとして使う */
+        {
+            if (c == 'q' || c == 'Q') break;
+            if (c == 'r' || c == 'R') { n_on = 0U; n_off = 0U; }
+        }
+
+        samples++;
+        if (HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin) == GPIO_PIN_SET) highs++;
+
+        uint8_t now = EmergencyStop_PowerOn();
+        if (now != prev)
+        {
+            uint32_t t = HAL_GetTick();
+            if (now) n_on++; else n_off++;
+            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  %s (after %lu ms in the previous state)                    \r\n",
+                     now ? ">>> ON  (button released)" : "<<< OFF (button pressed)", (unsigned long)(t - t_edge));
+            Serial_Print(g_tx_buf);
+            t_edge = t;
+            prev   = now;
+        }
+
+        if (HAL_GetTick() - t_print >= 100U)
+        {
+            t_print = HAL_GetTick();
+            snprintf(g_tx_buf, sizeof(g_tx_buf), "\r  raw = %d   high = %3lu%%   state = %-3s   ON count = %lu   OFF count = %lu   ",
+                     (int)HAL_GPIO_ReadPin(ESTOP_SENSE_GPIO_Port, ESTOP_SENSE_Pin),
+                     (unsigned long)(samples ? (highs * 100U / samples) : 0U),
+                     now ? "ON" : "OFF", (unsigned long)n_on, (unsigned long)n_off);
+            Serial_Print(g_tx_buf);
+            samples = 0U;
+            highs   = 0U;
+        }
+    }
+
+    snprintf(g_tx_buf, sizeof(g_tx_buf), "\r\n  ON count = %lu, OFF count = %lu\r\n", (unsigned long)n_on, (unsigned long)n_off);
+    Serial_Print(g_tx_buf);
+    Serial_Println("[TEST 1] Done. Check: button not pressed -> ON (high near 100%); pressed -> OFF (high near 0%).");
 }
 
 /* ============================================================

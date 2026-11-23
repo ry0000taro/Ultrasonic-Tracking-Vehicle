@@ -14,7 +14,8 @@ extern TIM_HandleTypeDef htim2;
 /* PB1（ESTOP_SENSE）: モータ 12V の分圧（約 3.0V）。HIGH = モータ電源 ON */
 #define ESTOP_POWER_ON_LEVEL   GPIO_PIN_SET
 #define ESTOP_SAMPLE_PERIOD_MS 10U      /* 読み取り周期 [ms] */
-#define ESTOP_CONFIRM_SAMPLES  2U       /* 連続して同じ値なら確定（10ms x 2 = 約 20ms） */
+#define ESTOP_OFF_CONFIRM_SAMPLES 5U    /* raw が 5 回連続で LOW（0）なら OFF と確定して止める（10ms x 5 = 約 50ms） */
+#define ESTOP_ON_CONFIRM_SAMPLES  2U    /* raw が 2 回連続で HIGH（1）なら ON と確定する（10ms x 2 = 約 20ms） */
 
 static volatile uint8_t  s_enabled   = 0U;   /* 1 = 緊急停止が有効（起動時は無効） */
 static volatile uint8_t  s_active    = 0U;   /* 1 = 緊急停止中 */
@@ -55,7 +56,7 @@ void EmergencyStop_Tick1ms(void)
 
     if (now == s_power_on) {
         s_diff = 0U;
-    } else if (++s_diff >= ESTOP_CONFIRM_SAMPLES) {
+    } else if (++s_diff >= (now ? ESTOP_ON_CONFIRM_SAMPLES : ESTOP_OFF_CONFIRM_SAMPLES)) {
         s_power_on = now;
         s_diff     = 0U;
         if (!s_power_on) {          /* ON → OFF */
