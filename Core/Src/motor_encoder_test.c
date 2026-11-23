@@ -38,8 +38,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
    Constants（原本のまま）
    ============================================================ */
 #define PWM_PERIOD      55999UL     /* CubeMX の TIM2/TIM13/TIM14 の Period と同値 */
-#define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
-#define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
+#define PWM_DUTY_MAX      100       /* Motor_Set が出せる duty の上限 [%]（ハード上の上限。各テストでさらに絞る） */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
 
 /* 位置制御テスト（Test 5, Issue #31）のパラメータ */
@@ -50,6 +49,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define POS_KP             0.20f    /* 比例ゲイン [duty % / mm]（仮。偏差 100mm で duty 20%、250mm 以上で上限 50%） */
 #define POS_DEADBAND_MM    5.0f     /* 残り偏差がこれ以下で止める [mm] */
 #define POS_DUTY_MIN       20.0f    /* 走行中に出す最小 duty [%]（仮）。これ未満だと動き続けられず、目標の手前で止まる */
+#define POS_DUTY_MAX       50.0f    /* 位置制御テストで出す duty の上限 [%] */
 #define POS_KICK_DUTY      30.0f    /* 始動時に出す強めの duty [%]（静止摩擦に勝つため。仮） */
 #define POS_KICK_MS        150U     /* 始動の強めの duty を出す時間 [ms]（仮） */
 #define POS_TARGET_MAX_MM  2000     /* 入力できる目標距離の上限 [mm] */
@@ -59,7 +59,8 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define SPD_TARGET_MAX_MMPS 500     /* 入力できる目標速度の上限 [mm/s]（最大 0.5 m/s） */
 #define SPD_KP              0.05f   /* 比例ゲイン [duty % / (mm/s)]（仮） */
 #define SPD_KI              0.30f   /* 積分ゲイン [duty % / (mm/s·s)]（仮） */
-#define SPD_INTEG_MAX       40.0f   /* 積分項の上限 [duty %]（仮） */
+#define SPD_INTEG_MAX       90.0f   /* 積分項の上限 [duty %]（仮）。500 mm/s で走り続けるのに必要な duty（約 70〜80 %）を積分項が出せる大きさ */
+#define SPD_DUTY_MAX        90.0f   /* 速度制御テストで出す duty の上限 [%]。500 mm/s は無負荷で約 70 %、荷重で約 80 % 必要（設計書）。100 %まで使い切らず余裕を残す */
 #define SPD_ACCEL_MMPS2     300.0f  /* 目標速度の加速の制限 [mm/s^2]（0.3 m/s^2） */
 #define SPD_LOOP_MS         10U     /* 制御周期 [ms]（設計書は 1 ms。テストでは 10 ms） */
 #define SPD_HIST_NUM        6U      /* 速度を求めるために保存するカウントの件数（窓 = (件数-1) x 周期 = 50 ms） */
@@ -401,7 +402,7 @@ static void Test_PositionControl(void)
             if (out < POS_DUTY_MIN)               out = POS_DUTY_MIN;
             if (HAL_GetTick() - t_start < POS_KICK_MS && out < POS_KICK_DUTY)
                 out = POS_KICK_DUTY;                                /* 始動時だけ強めに出して、静止摩擦に勝つ */
-            if (out > (float)PWM_DUTY_MAX)        out = (float)PWM_DUTY_MAX;
+            if (out > POS_DUTY_MAX)               out = POS_DUTY_MAX;
             duty[i] = out;
         }
 
@@ -582,7 +583,7 @@ static void Test_SpeedControl(void)
                 out   = SpeedCtrl_Update(&ctrl[i], error, dt);
             }
             if (out < 0.0f)                out = 0.0f;                  /* 後退はしない */
-            if (out > (float)PWM_DUTY_MAX) out = (float)PWM_DUTY_MAX;
+            if (out > SPD_DUTY_MAX)        out = SPD_DUTY_MAX;
             duty[i] = out;
         }
         Motor1_Set((int16_t)(motor_sign[0] * (int)(duty[0] + 0.5f)));
