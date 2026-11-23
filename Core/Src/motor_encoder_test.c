@@ -46,9 +46,9 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define MM_PER_COUNT_2     0.039f   /* TODO(#31): 同上（Encoder2）。左右別々に測る */
 #define POS_MOTOR1_SIGN   -1        /* Motor1 の出力の向き。+1 の duty で逆に進んだため -1（正の duty で前進するなら +1） */
 #define POS_MOTOR2_SIGN   -1        /* 同上（Motor2） */
-#define POS_KP             0.10f    /* 比例ゲイン [duty % / mm]（仮。偏差 100mm で duty 10%） */
+#define POS_KP             0.20f    /* 比例ゲイン [duty % / mm]（仮。偏差 100mm で duty 20%、250mm 以上で上限 50%） */
 #define POS_DEADBAND_MM    5.0f     /* 残り偏差がこれ以下で止める [mm] */
-#define POS_DUTY_MIN       10.0f    /* 動き出せる最小 duty [%]（仮） */
+#define POS_DUTY_MIN       20.0f    /* 走行中に出す最小 duty [%]（仮）。これ未満だと動き続けられず、目標の手前で止まる */
 #define POS_KICK_DUTY      30.0f    /* 始動時に出す強めの duty [%]（静止摩擦に勝つため。仮） */
 #define POS_KICK_MS        150U     /* 始動の強めの duty を出す時間 [ms]（仮） */
 #define POS_TARGET_MAX_MM  2000     /* 入力できる目標距離の上限 [mm] */
