@@ -331,7 +331,7 @@ static void Test_PositionControl(void)
 {
     Serial_Println("\r\n[TEST 5] Position control (Motor1 + Motor2, Encoder1 + Encoder2)");
     snprintf(g_tx_buf, sizeof(g_tx_buf),
-             "Enter target distance [mm] (1-%d) then Enter, 'q' to cancel.\r\n", POS_TARGET_MAX_MM);
+             "Enter target distance [mm] (1-%d) then Enter, 'q' to cancel. While running, 'q' stops.\r\n", POS_TARGET_MAX_MM);
     Serial_Print(g_tx_buf);
     Serial_Print("Target [mm] > ");
 
@@ -358,6 +358,7 @@ static void Test_PositionControl(void)
     Encoder2_Reset();
 
     uint8_t done[2] = { 0U, 0U };
+    uint8_t stopped = 0U;           /* 1: 'q' で途中停止した */
     float   dist[2] = { 0.0f, 0.0f };
     float   duty[2] = { 0.0f, 0.0f };
 
@@ -392,11 +393,18 @@ static void Test_PositionControl(void)
                  (unsigned long)target);
         Serial_Print(g_tx_buf);
 
-        HAL_Delay(POS_LOOP_MS);
+        /* 制御周期の待ちを兼ねて、'q' が押されたら途中でも止める */
+        char key = 0;
+        if (Serial_ReceiveChar(&key, POS_LOOP_MS) && (key == 'q' || key == 'Q'))
+        {
+            stopped = 1U;
+            break;
+        }
     }
 
     Motor1_Set(0);
     Motor2_Set(0);
+    if (stopped) Serial_Println("\r\n  Stopped by user ('q').");
 
     /* 止まった後、惰性で動いた分まで含めて最終距離を測る */
     HAL_Delay(500);
@@ -407,7 +415,8 @@ static void Test_PositionControl(void)
              (long)dist[0], (long)dist[0] - (long)target,
              (long)dist[1], (long)dist[1] - (long)target);
     Serial_Print(g_tx_buf);
-    Serial_Println("[TEST 5] Done. Check that the error is within +/-50 mm.");
+    Serial_Println(stopped ? "[TEST 5] Stopped before reaching the target."
+                           : "[TEST 5] Done. Check that the error is within +/-50 mm.");
 }
 
 /* ============================================================
