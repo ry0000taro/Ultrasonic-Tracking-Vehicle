@@ -8,8 +8,8 @@
   *
   * [ピン配置（原本 → 本プロジェクト）]
   *  Motor1 IN1/IN2 : PA6/PA7 (TIM3 CH1/CH2)  -> PA6/PA7 (TIM13_CH1 / TIM14_CH1, AF9)
-  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PB4/PB5 (TIM3 CH1/CH2, CubeMX 生成の htim3)
-  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA8/PA9 (TIM1, CubeMX 生成の htim1。液晶 RESET/DC を PB14/PB10 に移した)
+  *  Motor2 IN1/IN2 : PA0/PA1 (TIM2)          -> PA1/PA0 (TIM2 CH2/CH1, CubeMX 生成の htim2。IN1=PA1, IN2=PA0)
+  *  Encoder1 A/B   : PA8/PA9 (TIM1)          -> PA9/PA8 (TIM1 CH2=A相, CH1=B相, ラベル ENC1_A=PA9, ENC1_B=PA8, htim1)
   *  Encoder2 A/B   : PB6/PB7 (TIM4 CH1/CH2)  -> PB7/PB6 (TIM4 CH2=A相, CH1=B相, htim4)
   *  USART2         : PA2/PA3 (変更なし)
   *
@@ -25,7 +25,7 @@
 #include <stdlib.h>
 
 extern TIM_HandleTypeDef htim1;     /* Encoder1（CubeMX 生成） */
-extern TIM_HandleTypeDef htim3;     /* Motor2 PWM（CubeMX 生成） */
+extern TIM_HandleTypeDef htim2;     /* Motor2 PWM（CubeMX 生成） */
 extern TIM_HandleTypeDef htim4;     /* Encoder2（CubeMX 生成） */
 extern UART_HandleTypeDef huart2;   /* Serial（CubeMX 生成） */
 
@@ -35,7 +35,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 /* ============================================================
    Constants（原本のまま）
    ============================================================ */
-#define PWM_PERIOD      55999UL     /* CubeMX の TIM3/TIM13/TIM14 の Period と同値 */
+#define PWM_PERIOD      55999UL     /* CubeMX の TIM2/TIM13/TIM14 の Period と同値 */
 #define PWM_DUTY_MAX       50       /* Maximum duty cycle [%] */
 #define ENCODER_TEST_DUTY  50       /* Duty cycle for encoder test [%] */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
@@ -112,7 +112,7 @@ void MotorEncoderTest_Run(void)
 
 static void MotorEncoderTest_Init(void)
 {
-    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA8/PA9) と Encoder2 (PB6/PB7) のプルアップは、
+    /* TODO(#18 レビュー指摘・見送り): Encoder1 (PA9/PA8) と Encoder2 (PB6/PB7) のプルアップは、
      *   CubeMX の .ioc に反映できなかった（生成コードが GPIO_NOPULL のまま）ため、ここで手書きで再設定している。
      *   この初期化を通らない本番コードではピンが浮く。.ioc で Pull-up にできたら、この再設定を削除すること。 */
 
@@ -125,7 +125,7 @@ static void MotorEncoderTest_Init(void)
     enc2_gpio.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &enc2_gpio);
 
-    /* Encoder1 (PA8/PA9): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
+    /* Encoder1 (PA9/PA8): CubeMX の MspInit は NOPULL なので、プルアップに再設定する */
     GPIO_InitTypeDef enc1_gpio = {0};
     enc1_gpio.Pin       = ENC1_A_Pin | ENC1_B_Pin;
     enc1_gpio.Mode      = GPIO_MODE_AF_PP;
@@ -134,11 +134,11 @@ static void MotorEncoderTest_Init(void)
     enc1_gpio.Alternate = GPIO_AF1_TIM1;
     HAL_GPIO_Init(GPIOA, &enc1_gpio);
 
-    /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM3（いずれも CubeMX 生成） */
+    /* Encoder1: TIM1, Encoder2: TIM4, Motor2: TIM2（いずれも CubeMX 生成） */
     HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
     HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);          /* Motor2 IN1 (PB4) */
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);          /* Motor2 IN2 (PB5) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);          /* Motor2 IN1 (PA1) */
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);          /* Motor2 IN2 (PA0) */
     HAL_TIM_PWM_Start(&htim13, TIM_CHANNEL_1);         /* Motor1 IN1 (PA6) */
     HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);         /* Motor1 IN2 (PA7) */
 
@@ -159,7 +159,7 @@ static void Print_Menu(void)
     Serial_Println(" 5 : Position control (enter target distance, Motor1 + Motor2)");
     Serial_Println(" 6 : Motor2 + Encoder2 test");
     Serial_Println(" 7 : Encoder monitor (no motor, rotate by hand)");
-    Serial_Println(" 8 : Buzzer test (PA0)");
+    Serial_Println(" 8 : Buzzer test (PB10)");
     Serial_Println(" 9 : LCD test (color fill + color bands)");
     Serial_Println("------------------------------------------------");
     Serial_Print  (" Enter number > ");
@@ -189,7 +189,7 @@ static void Test_Encoder_Monitor(void)
 
         /* 切り分け用: ピンの生のレベル（0/1）も表示する。軸を回して変化すれば配線・電源は生きている */
         snprintf(g_tx_buf, sizeof(g_tx_buf),
-                 "\r  Enc1 cnt=%7ld (PA8 A=%d PA9 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
+                 "\r  Enc1 cnt=%7ld (PA9 A=%d PA8 B=%d)   Enc2 cnt=%7ld (PB7 A=%d PB6 B=%d)   ",
                  (long)Encoder1_Get(),
                  (int)HAL_GPIO_ReadPin(ENC1_A_GPIO_Port, ENC1_A_Pin),
                  (int)HAL_GPIO_ReadPin(ENC1_B_GPIO_Port, ENC1_B_Pin),
@@ -205,14 +205,12 @@ static void Test_Encoder_Monitor(void)
 }
 
 /* ============================================================
-   Test 8: Buzzer test（PA0 = BUZZER）
-   PA0 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
-   注意: PA0 は TE-01 基板ではモータ2の IN1 なので、TE-01 では Motor2 につないだアームが動く。
+   Test 8: Buzzer test（PB10 = BUZZER）
+   PB10 を GPIO 出力で HIGH/LOW する（アクティブブザー想定。ブザーは 2SC1815L-Y 経由で駆動）。
    ============================================================ */
 static void Test_Buzzer(void)
 {
-    Serial_Println("\r\n[TEST 8] Buzzer test (PA0)");
-    Serial_Println("NOTE: PA0 is Motor2 IN1 on the TE-01 board. Motor2 will move there.");
+    Serial_Println("\r\n[TEST 8] Buzzer test (PB10)");
     Serial_Println("Press Enter to start, 'q' to cancel...");
 
     if (!Serial_WaitEnter()) { Serial_Println("Cancelled."); return; }
@@ -529,10 +527,10 @@ static void Motor1_Set(int16_t duty_percent)
     Motor_Set(&htim13, TIM_CHANNEL_1, &htim14, TIM_CHANNEL_1, duty_percent);
 }
 
-/* Motor2: IN1=PB4 (TIM3_CH1), IN2=PB5 (TIM3_CH2) */
+/* Motor2: IN1=PA1 (TIM2_CH2), IN2=PA0 (TIM2_CH1) */
 static void Motor2_Set(int16_t duty_percent)
 {
-    Motor_Set(&htim3, TIM_CHANNEL_1, &htim3, TIM_CHANNEL_2, duty_percent);
+    Motor_Set(&htim2, TIM_CHANNEL_2, &htim2, TIM_CHANNEL_1, duty_percent);
 }
 
 /* ============================================================
