@@ -94,6 +94,7 @@ static void Serial_Print(const char *str);
 static void Serial_Println(const char *str);
 static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms);
 static uint8_t Serial_WaitEnter(void);
+static uint8_t Serial_IsEnter(char c);
 static uint8_t Serial_ReadNumber(uint32_t *value);
 static void Motor1_Set(int16_t duty_percent);
 static void Motor2_Set(int16_t duty_percent);
@@ -592,7 +593,7 @@ static uint8_t Serial_ReadNumber(uint32_t *value)
         if (!Serial_ReceiveChar(&c, HAL_MAX_DELAY)) continue;
 
         if (c == 'q' || c == 'Q') return 0U;
-        if ((c == 13 || c == 10) && digits > 0) { *value = v; return 1U; }
+        if (Serial_IsEnter(c) && digits > 0) { *value = v; return 1U; }
         if (c >= '0' && c <= '9' && digits < 5)         /* 5 桁まで（桁あふれ防止） */
         {
             v = v * 10U + (uint32_t)(c - '0');
@@ -904,6 +905,27 @@ static uint8_t Serial_ReceiveChar(char *c, uint32_t timeout_ms)
     return (HAL_UART_Receive(&huart2, (uint8_t *)c, 1, timeout_ms) == HAL_OK) ? 1U : 0U;
 }
 
+/* 直前に受け取った改行文字（13 or 10）。0 = 直前は改行ではない。CRLF / LFCR を 1 回の Enter にするために使う */
+static char s_last_eol = 0;
+
+/* c が Enter なら 1。CR+LF（または LF+CR）の 2 文字目は対の文字なので 0（読み捨て）。
+   CR だけ・LF だけの端末は、1 文字ごとに Enter として扱う */
+static uint8_t Serial_IsEnter(char c)
+{
+    if (c == 13 || c == 10)
+    {
+        if (s_last_eol != 0 && s_last_eol != c)
+        {
+            s_last_eol = 0;     /* 対の文字（CRLF の LF など）。Enter としては数えない */
+            return 0U;
+        }
+        s_last_eol = c;
+        return 1U;
+    }
+    s_last_eol = 0;
+    return 0U;
+}
+
 /* 開始待ち: Enter（CR または LF）で 1、'q' / 'Q' で 0 を返す。それ以外の入力は無視して待ち続ける */
 static uint8_t Serial_WaitEnter(void)
 {
@@ -911,7 +933,7 @@ static uint8_t Serial_WaitEnter(void)
     while (1)
     {
         if (!Serial_ReceiveChar(&c, HAL_MAX_DELAY)) continue;
-        if (c == 13 || c == 10) return 1U;
+        if (Serial_IsEnter(c)) return 1U;
         if (c == 'q' || c == 'Q') return 0U;
     }
 }
