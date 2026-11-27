@@ -42,6 +42,7 @@ extern TIM_HandleTypeDef htim14;    /* Motor1 IN2 (PA7)（CubeMX 生成） */
 #define PWM_DUTY_MAX      100       /* Motor_Set が出せる duty の上限 [%]（ハード上の上限。各テストでさらに絞る） */
 #define UART_TIMEOUT    100U        /* UART transmit timeout [ms] */
 #define ESTOP_TEST_DUTY    20       /* Duty cycle for the emergency stop test [%] */
+#define ENCODER_TEST_DUTY  50       /* Duty cycle for the 2-motor encoder test (menu 4) [%] */
 
 /* 位置制御テスト（Test 5, Issue #31）のパラメータ */
 #define MM_PER_COUNT_1     0.039f   /* TODO(#31): 仮の値（2048PPR x4逓倍・出力軸側の計算値）。実機で測った値に置き換える（Encoder1） */
